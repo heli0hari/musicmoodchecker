@@ -11,6 +11,15 @@ interface MediaPlayerProps {
 const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMode }) => {
   const { currentTrack, isPlaying, progress_ms } = spotifyState;
   const [localProgress, setLocalProgress] = useState(progress_ms);
+  
+  // Optimistic UI state
+  const [optimisticIsPlaying, setOptimisticIsPlaying] = useState(isPlaying);
+
+  // Sync optimistic state with actual state when prop changes, 
+  // but only if we haven't just clicked (optional refinement, but simple sync works well with fast polling)
+  useEffect(() => {
+    setOptimisticIsPlaying(isPlaying);
+  }, [isPlaying]);
 
   // Sync local progress with prop updates
   useEffect(() => {
@@ -19,7 +28,7 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
 
   // Simulated progress timer for smoother UI
   useEffect(() => {
-    if (!isPlaying || !currentTrack) return;
+    if (!optimisticIsPlaying || !currentTrack) return;
     
     const interval = setInterval(() => {
       setLocalProgress((prev) => {
@@ -29,7 +38,7 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPlaying, currentTrack]);
+  }, [optimisticIsPlaying, currentTrack]);
 
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -41,10 +50,15 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
   const handlePlayPause = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!token || isDemoMode) return;
-    if (isPlaying) {
-      pauseTrack(token);
-    } else {
+    
+    // Optimistic Update - Immediate visual feedback
+    const newState = !optimisticIsPlaying;
+    setOptimisticIsPlaying(newState);
+
+    if (newState) {
       playTrack(token);
+    } else {
+      pauseTrack(token);
     }
   };
 
@@ -66,59 +80,67 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
   const albumArt = currentTrack.album.images[0]?.url;
 
   return (
-    <div className="absolute top-0 md:top-auto md:bottom-8 left-0 md:left-8 w-full md:w-80 z-40 p-4 pointer-events-none">
-      <div className="pointer-events-auto bg-black/80 backdrop-blur-md border border-white/20 p-3 shadow-[0px_0px_20px_rgba(0,0,0,0.5)] flex items-center gap-3 relative overflow-hidden group">
+    <div className="absolute top-0 md:top-auto md:bottom-8 left-0 md:left-8 w-full md:w-[26rem] z-40 p-4 md:p-0 pointer-events-none">
+      {/* 
+        MEDIA PLAYER CONTAINER 
+        Mobile: Scaled up padding, borders, and sizes.
+        Desktop: Standard sizing.
+      */}
+      <div className="pointer-events-auto bg-black/95 md:bg-black/90 backdrop-blur-xl border-b md:border border-white/20 p-4 md:p-4 shadow-[0px_4px_30px_rgba(0,0,0,0.8)] flex items-center gap-5 md:gap-4 relative overflow-hidden group rounded-b-2xl md:rounded-none">
         
         {/* Scanline overlay */}
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay pointer-events-none"></div>
 
-        {/* Album Art */}
-        <div className="relative w-14 h-14 flex-shrink-0 border border-white/10">
+        {/* Album Art - Significantly Larger on Mobile */}
+        <div className="relative w-24 h-24 md:w-24 md:h-24 flex-shrink-0 border border-white/10 bg-black shadow-lg rounded-md md:rounded-none overflow-hidden">
           {albumArt ? (
             <img src={albumArt} alt="Album Art" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full bg-white/10 flex items-center justify-center text-[10px]">NO IMG</div>
           )}
           {/* Spinning decorative vinyl-like ring */}
-          <div className={`absolute inset-0 rounded-full border border-white/30 opacity-0 group-hover:opacity-100 transition-opacity ${isPlaying ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }}></div>
+          <div className={`absolute inset-0 rounded-full border-2 border-white/30 opacity-0 group-hover:opacity-100 transition-opacity ${optimisticIsPlaying ? 'animate-spin' : ''}`} style={{ animationDuration: '3s' }}></div>
         </div>
 
         {/* Track Info & Controls */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
+        <div className="flex-1 min-w-0 flex flex-col justify-center gap-3 md:gap-2">
           {/* Title */}
-          <div className="flex flex-col">
-            <span className="text-white font-bold text-sm truncate uppercase tracking-wide">{currentTrack.name}</span>
-            <span className="text-white/50 text-[10px] truncate uppercase tracking-wider">{currentTrack.artists[0]?.name}</span>
+          <div className="flex flex-col pr-2">
+            <span className="text-white font-bold text-lg md:text-lg truncate uppercase tracking-wide drop-shadow-md leading-tight">{currentTrack.name}</span>
+            <span className="text-white/60 text-sm md:text-sm truncate uppercase tracking-wider">{currentTrack.artists[0]?.name}</span>
           </div>
 
-          {/* Progress Bar */}
-          <div className="w-full h-1 bg-white/10 rounded-full mt-2 relative overflow-hidden">
+          {/* Progress Bar - Thicker for Touch */}
+          <div className="w-full h-3 md:h-2 bg-white/10 rounded-full mt-1 relative overflow-hidden">
             <div 
-              className="absolute left-0 top-0 h-full bg-green-500 transition-all duration-1000 linear"
+              className="absolute left-0 top-0 h-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)] transition-all duration-1000 linear"
               style={{ width: `${progressPercent}%` }}
             ></div>
           </div>
-          <div className="flex justify-between text-[8px] text-white/40 font-mono mt-1">
+          <div className="flex justify-between text-[11px] md:text-[10px] text-white/50 font-mono">
             <span>{formatTime(localProgress)}</span>
             <span>{formatTime(currentTrack.duration_ms)}</span>
           </div>
-        </div>
 
-        {/* Controls */}
-        <div className={`flex flex-col gap-1 ml-2 ${isDemoMode ? 'opacity-50 pointer-events-none' : ''}`}>
-           <div className="flex items-center gap-1">
-             <button onClick={handlePrev} className="p-1 text-white/70 hover:text-white hover:bg-white/10">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+           {/* Controls - Larger Touch Targets for Mobile */}
+          <div className={`flex items-center justify-between mt-2 md:mt-1 ${isDemoMode ? 'opacity-50 pointer-events-none' : ''}`}>
+             {/* Prev Button */}
+             <button onClick={handlePrev} className="p-3 md:p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full active:bg-white/20">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="md:w-6 md:h-6"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
              </button>
-             <button onClick={handlePlayPause} className="p-1 text-white hover:text-green-400 hover:bg-white/10 border border-white/10">
-                {isPlaying ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+             
+             {/* Play/Pause Button - Prominent */}
+             <button onClick={handlePlayPause} className="p-4 md:p-2 text-white hover:text-green-400 bg-white/5 hover:bg-white/10 border border-white/20 rounded-full active:scale-95 transition-all shadow-lg active:bg-white/20">
+                {optimisticIsPlaying ? (
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" className="md:w-8 md:h-8"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                 ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" className="md:w-8 md:h-8"><path d="M8 5v14l11-7z"/></svg>
                 )}
              </button>
-             <button onClick={handleNext} className="p-1 text-white/70 hover:text-white hover:bg-white/10">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+             
+             {/* Next Button */}
+             <button onClick={handleNext} className="p-3 md:p-2 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition-all rounded-full active:bg-white/20">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="md:w-6 md:h-6"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
              </button>
            </div>
         </div>

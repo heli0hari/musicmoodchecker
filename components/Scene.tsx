@@ -29,7 +29,7 @@ const getParticleTexture = () => {
 
 // --- Particle System Component ---
 
-const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boolean }) => {
+const ParticleSystem = ({ mood, isPlaying, tempo }: { mood: MoodState, isPlaying: boolean, tempo: number }) => {
   const maxCount = 800; // Increased count for better visibility
   const meshRef = useRef<THREE.Points>(null);
   
@@ -133,7 +133,19 @@ const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boole
       driftAmp = 0.6;
     }
 
-    const beatSpeed = isPlaying ? (isHighEnergy ? 4 : 2) : 1;
+    // --- Tempo Sync Logic ---
+    // If we have a valid tempo, calculate frequency in Hz (BPM / 60).
+    // Multiply by PI*2 to get angular frequency for sine wave.
+    let pulseFrequency = 1;
+    if (isPlaying && tempo > 0) {
+      pulseFrequency = (tempo / 60) * Math.PI * 2; 
+    } else if (isPlaying) {
+      // Fallback if no tempo but playing (approx 100bpm)
+      pulseFrequency = (100 / 60) * Math.PI * 2;
+    } else {
+      // Breathing speed when paused
+      pulseFrequency = 1; 
+    }
 
     for (let i = 0; i < maxCount; i++) {
       const isActive = i < activeCount;
@@ -157,8 +169,10 @@ const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boole
         positions[ix + 1] = by + dy;
         positions[ix + 2] = bz + dz;
 
-        // Beat Pulse
-        const pulse = Math.sin(time * beatSpeed + (rx * 10)); 
+        // Beat Pulse - Synced to BPM
+        // Add phase offset based on particle index/random to create ripples
+        const phase = rx * 10;
+        const pulse = Math.sin((time * pulseFrequency) + phase);
         
         // Alpha/Brightness
         let alpha = 0.6;
@@ -168,6 +182,7 @@ const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boole
         } else {
             const minAlpha = 0.4 + (currentMood.energy * 0.3);
             const sparkle = (currentMood.euphoria > 0.6 && pulse > 0.9) ? 0.8 : 0;
+            // Modulate alpha with beat pulse
             alpha = minAlpha + (pulse * 0.2 * currentMood.euphoria) + sparkle;
         }
 
@@ -259,13 +274,18 @@ const AudioReactiveBlob = ({ mood, tempo, isPlaying }: { mood: MoodState, tempo:
     let beatPulse = 0;
     if (isPlaying && tempo > 0) {
       const beatDuration = 60 / tempo;
+      // Normalize time to beat cycle (0 to 1)
       const beatProgress = (time % beatDuration) / beatDuration;
+      
       if (materialType === VisualizerMaterial.Romance) {
+        // Sharp thump at start of beat
         beatPulse = (Math.sin(beatProgress * Math.PI * 2) > 0.9 ? 0.2 : 0);
       } else {
+        // Smooth sine wave pulse
         beatPulse = Math.pow(Math.sin(beatProgress * Math.PI), 5); 
       }
     } else {
+      // Slow breathing when paused
       beatPulse = (Math.sin(time) * 0.5 + 0.5) * 0.2; 
     }
 
@@ -389,7 +409,7 @@ const SceneContent: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
   return (
     <group scale={groupScale} position={groupPos}>
         <AudioReactiveBlob mood={mood} tempo={tempo} isPlaying={isPlaying} />
-        <ParticleSystem mood={mood} isPlaying={isPlaying} />
+        <ParticleSystem mood={mood} isPlaying={isPlaying} tempo={tempo} />
     </group>
   );
 };

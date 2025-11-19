@@ -7,7 +7,7 @@ export const generatePlaylist = async (mood: MoodState, userContext?: string): P
   const modelId = "gemini-2.5-flash";
   
   const prompt = `
-    Generate a short music playlist suggestion (3 songs) based on the following mood parameters (0.0 to 1.0 scale):
+    Generate a music playlist suggestion (10 songs) based on the following mood parameters (0.0 to 1.0 scale):
     Energy: ${mood.energy}
     Valence (Positivity): ${mood.valence}
     Euphoria: ${mood.euphoria}

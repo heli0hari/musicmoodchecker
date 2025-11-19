@@ -199,11 +199,14 @@ const App: React.FC = () => {
           setSpotifyState(prev => ({ ...prev, progress_ms, isPlaying: is_playing }));
         }
       } else {
+         // If no track is playing, we might want to clear state or just set isPlaying false
          setSpotifyState(prev => ({ ...prev, isPlaying: false }));
       }
     };
+    
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    // Poll faster (every 1s) to make visualizer and controls feel more responsive
+    const interval = setInterval(fetchData, 1000); 
     return () => clearInterval(interval);
   }, [token, spotifyState.currentTrack?.id, isDemoMode]);
 
