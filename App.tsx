@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import Scene from './components/Scene';
 import Sidebar from './components/Sidebar';
 import MediaPlayer from './components/MediaPlayer';
@@ -13,20 +13,14 @@ const INITIAL_MOOD: MoodState = {
 };
 
 const App: React.FC = () => {
-  // Initialize Client ID with priority:
-  // 1. LocalStorage (Saved by user previously)
-  // 2. Vite Environment Variable (VITE_SPOTIFY_CLIENT_ID)
-  // 3. Process Env (Fallback)
   const [clientId, setClientId] = useState<string>(() => {
     const saved = localStorage.getItem('spotify_client_id');
     if (saved) return saved;
-    
-    // @ts-ignore - Vite specific
+    // @ts-ignore
     if (import.meta.env && import.meta.env.VITE_SPOTIFY_CLIENT_ID) {
       // @ts-ignore
       return import.meta.env.VITE_SPOTIFY_CLIENT_ID;
     }
-
     return process.env.SPOTIFY_CLIENT_ID || "";
   });
 
@@ -34,6 +28,7 @@ const App: React.FC = () => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
+  const [showClientId, setShowClientId] = useState(false); // Toggle ID visibility
   
   const [spotifyState, setSpotifyState] = useState<SpotifyState>({
     isConnected: false,
@@ -45,17 +40,18 @@ const App: React.FC = () => {
 
   const [token, setToken] = useState<string | null>(null);
 
-  // Handle Spotify Auth Callback & Errors
+  // Handle Spotify Auth Callback
   useEffect(() => {
     const { token: accessToken, error } = getTokenFromUrl();
     
     if (error) {
-      setConnectionError(`Spotify Error: ${error}`);
+      console.error("Spotify Auth Error:", error);
+      setConnectionError(`Spotify says: "${error}"`);
       setShowSettings(true);
-      window.location.hash = ""; // Clear error from URL
+      window.location.hash = ""; 
     } else if (accessToken) {
       setToken(accessToken);
-      window.location.hash = ""; // Clear token from URL
+      window.location.hash = "";
       setSpotifyState(prev => ({ ...prev, isConnected: true }));
       setShowSettings(false);
       setConnectionError(null);
@@ -63,8 +59,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleConnect = () => {
-    // Sanitize ID to remove spaces
-    const cleanClientId = clientId.trim();
+    const cleanClientId = clientId.replace(/[^a-zA-Z0-9]/g, "");
     setClientId(cleanClientId);
 
     if (!cleanClientId) {
@@ -72,46 +67,40 @@ const App: React.FC = () => {
       setShowSettings(true);
       return;
     }
+
+    if (cleanClientId.length !== 32) {
+      setConnectionError(`Invalid Client ID length (${cleanClientId.length}). Should be 32 chars.`);
+      setShowSettings(true);
+      return;
+    }
     
-    // Save ID to storage so user doesn't have to enter it again
     localStorage.setItem('spotify_client_id', cleanClientId);
-
-    // IMPORTANT: Spotify is strict about Redirect URIs.
-    // We enforce a trailing slash to match standard browser copy-paste behavior.
-    // If the dashboard has '...netlify.app' (no slash) but we send '...netlify.app/' (with slash), it fails.
+    
+    // Use origin + slash to match dashboard exactly
     const redirectUri = `${window.location.origin}/`; 
-
-    console.log("Redirecting to Spotify with URI:", redirectUri);
     window.location.href = getAuthUrl(cleanClientId, redirectUri);
   };
 
   const handleToggleDemo = () => {
     if (isDemoMode) {
-      // Turn off
       setIsDemoMode(false);
       setSpotifyState({ isConnected: false, currentTrack: null, features: null, progress_ms: 0, isPlaying: false });
+      setMood(INITIAL_MOOD);
     } else {
-      // Turn on
       setIsDemoMode(true);
     }
   };
 
-  // Demo Mode Loop
+  // Demo Loop
   useEffect(() => {
     if (!isDemoMode) return;
-
     const updateDemo = () => {
        const newEnergy = 0.3 + Math.random() * 0.7;
        const newValence = Math.random();
        const newEuphoria = Math.random();
        const newCognition = Math.random();
        
-       setMood({
-          energy: newEnergy,
-          valence: newValence,
-          euphoria: newEuphoria,
-          cognition: newCognition
-       });
+       setMood({ energy: newEnergy, valence: newValence, euphoria: newEuphoria, cognition: newCognition });
 
        setSpotifyState({
           isConnected: true,
@@ -119,7 +108,7 @@ const App: React.FC = () => {
              id: 'demo',
              name: 'SIMULATION_MODE',
              artists: [{name: 'VISUAL_TEST_UNIT'}],
-             album: { images: [{ url: '' }] }, // Empty url for demo
+             album: { images: [{ url: '' }] },
              duration_ms: 240000
           },
           features: {
@@ -135,72 +124,46 @@ const App: React.FC = () => {
           isPlaying: true
        });
     };
-
     updateDemo();
     const interval = setInterval(updateDemo, 4000);
     return () => clearInterval(interval);
   }, [isDemoMode]);
 
-  // Poll Spotify for updates (Only if not in demo mode)
+  // Spotify Polling
   useEffect(() => {
     if (!token || isDemoMode) return;
-
     const fetchData = async () => {
       const { track, progress_ms, is_playing } = await fetchCurrentTrack(token);
-      
       if (track) {
-        // Only fetch features if track changed
         if (track.id !== spotifyState.currentTrack?.id) {
           const features = await fetchAudioFeatures(token, track.id);
-          
-          setSpotifyState(prev => ({
-            ...prev,
-            currentTrack: track,
-            features: features,
-            progress_ms,
-            isPlaying: is_playing
-          }));
-
+          setSpotifyState(prev => ({ ...prev, currentTrack: track, features: features, progress_ms, isPlaying: is_playing }));
           if (features) {
-            // Map Spotify features to our Mood parameters
             setMood({
               energy: features.energy,
               valence: features.valence,
-              // Danceability is a good proxy for "Euphoria" in this context
               euphoria: features.danceability, 
-              // Acousticness/Instrumentalness often correlates with focus/cognition
               cognition: (features.acousticness + features.instrumentalness) / 2
             });
           }
         } else {
-          // Track same, just update progress and status
-          setSpotifyState(prev => ({
-             ...prev,
-             progress_ms,
-             isPlaying: is_playing
-          }));
+          setSpotifyState(prev => ({ ...prev, progress_ms, isPlaying: is_playing }));
         }
       } else {
-         // No track playing
          setSpotifyState(prev => ({ ...prev, isPlaying: false }));
       }
     };
-
-    // Initial fetch
     fetchData();
-    // Poll every 3 seconds (Faster for player UI)
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-
   }, [token, spotifyState.currentTrack?.id, isDemoMode]);
 
   return (
     <div className="w-full h-screen flex flex-col md:flex-row bg-[#050505] text-[#e0e0e0] overflow-hidden relative font-pixel">
-      {/* Settings Modal for Client ID */}
+      {/* Settings Modal */}
       {showSettings && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-          <div className="bg-black p-8 border-2 border-white/20 w-[30rem] shadow-[8px_8px_0px_0px_rgba(255,255,255,0.1)] relative">
-             {/* Decorative corners */}
+          <div className="bg-black p-8 border-2 border-white/20 w-[90%] md:w-[30rem] shadow-[8px_8px_0px_0px_rgba(255,255,255,0.1)] relative">
             <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-white"></div>
             <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-white"></div>
             <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-white"></div>
@@ -213,32 +176,40 @@ const App: React.FC = () => {
             {connectionError && (
               <div className="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-200 text-xs font-mono">
                 <span className="font-bold">ERROR:</span> {connectionError}
-                <p className="mt-1 opacity-70">Ensure Client ID is correct and Redirect URI matches Spotify Dashboard.</p>
+                <p className="mt-1 opacity-70">If error is "unsupported_response_type", it's often fixed by the app code update (automatically applied).</p>
               </div>
             )}
 
             <div className="text-xs text-white/60 mb-6 font-mono leading-relaxed space-y-4">
               <div className="space-y-1">
-                <p>&gt; SETUP INSTRUCTIONS:</p>
-                <p>1. Go to <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">Spotify Developer Dashboard</a></p>
-                <p>2. Create an App and copy the <strong>Client ID</strong> (Not Client Secret).</p>
-                <p>3. Click "Edit Settings" in Spotify Dashboard.</p>
+                <p className="text-white font-bold">&gt; SETUP CHECKLIST:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline">Spotify Developer Dashboard</a></li>
+                  <li>Add your email to <strong>Users and Access</strong> (Required for Development Mode)</li>
+                  <li>Add this exact URL to <strong>Redirect URIs</strong>:</li>
+                </ul>
               </div>
               
-              <div className="p-3 bg-white/5 border border-white/10">
-                <p className="text-[10px] uppercase text-red-300 font-bold mb-1">REQUIRED: ADD THIS TO SPOTIFY DASHBOARD:</p>
-                <code className="text-green-400 block select-all text-xs bg-black/50 p-2 border border-white/10">
+              <div className="p-2 bg-white/5 border border-white/10 text-center">
+                <code className="text-green-400 select-all text-xs block">
                   {`${window.location.origin}/`}
                 </code>
-                <p className="text-[9px] text-white/30 mt-1">*Copy exactly. This detects your current local or web address.</p>
               </div>
             </div>
 
-            <div className="mb-2">
-                <label className="text-[10px] uppercase text-white/40 block mb-1">Spotify Client ID</label>
+            <div className="mb-4">
+                <div className="flex justify-between items-end mb-1">
+                  <label className="text-[10px] uppercase text-white/40 block">Spotify Client ID</label>
+                  <button 
+                    onClick={() => setShowClientId(!showClientId)}
+                    className="text-[9px] text-blue-400 uppercase hover:text-white"
+                  >
+                    {showClientId ? "HIDE" : "SHOW"}
+                  </button>
+                </div>
                 <input 
-                  type="text" 
-                  placeholder="ENTER_CLIENT_ID..."
+                  type={showClientId ? "text" : "password"} 
+                  placeholder="32-character Client ID..."
                   className="w-full bg-black border border-white/40 p-3 text-white placeholder-white/20 font-mono text-sm focus:outline-none focus:border-white transition-colors"
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
@@ -272,15 +243,15 @@ const App: React.FC = () => {
         />
       </div>
 
-      {/* New Floating Media Player */}
+      {/* Floating Media Player */}
       <MediaPlayer 
         spotifyState={spotifyState} 
         token={token} 
         isDemoMode={isDemoMode} 
       />
 
-      {/* Sidebar */}
-      <div className="absolute bottom-0 w-full h-[45vh] md:static md:h-full md:w-auto md:flex-none z-10 hidden md:block">
+      {/* Sidebar (Desktop) */}
+      <div className="hidden md:block md:h-full md:w-auto md:flex-none z-10 relative">
         <Sidebar 
           currentMood={mood} 
           spotifyState={spotifyState}
@@ -291,7 +262,7 @@ const App: React.FC = () => {
         />
       </div>
       
-      {/* Manual Config Trigger Button (Bottom Right) */}
+      {/* Config Trigger (Bottom Right) */}
       <button 
         onClick={() => setShowSettings(true)}
         className="absolute bottom-2 right-2 z-50 text-[9px] text-white/20 hover:text-white uppercase tracking-widest border border-transparent hover:border-white/20 px-2 py-1 bg-black/50 backdrop-blur-sm transition-all"
@@ -299,7 +270,7 @@ const App: React.FC = () => {
         [ SYS_CONFIG ]
       </button>
 
-       {/* Sidebar for Mobile (conditionally rendered or styled) */}
+       {/* Sidebar (Mobile) */}
        <div className="absolute bottom-0 w-full h-[45vh] md:hidden z-20 bg-black/90 border-t border-white/20 overflow-auto">
           <Sidebar 
             currentMood={mood} 

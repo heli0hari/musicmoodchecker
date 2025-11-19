@@ -1,23 +1,32 @@
 import { SpotifyTrack, AudioFeatures } from "../types";
 
-const SCOPES = [
+const SCOPES_LIST = [
+  "user-read-private",
+  "user-read-email",
   "user-read-currently-playing",
   "user-read-playback-state",
-  "user-modify-playback-state", // Added for controls
+  "user-modify-playback-state",
   "playlist-modify-public",
   "playlist-modify-private"
-].join(" ");
+];
 
 export const getAuthUrl = (clientId: string, redirectUri: string) => {
-  // Using URLSearchParams ensures proper encoding of special characters and spaces
-  const url = new URL("https://accounts.spotify.com/authorize");
-  url.searchParams.append("client_id", clientId);
-  url.searchParams.append("redirect_uri", redirectUri);
-  url.searchParams.append("scope", SCOPES);
-  url.searchParams.append("response_type", "token");
-  url.searchParams.append("show_dialog", "true");
-  
-  return url.toString();
+  // Using URLSearchParams ensures all parameters are correctly encoded for the URL.
+  const params = new URLSearchParams({
+    client_id: clientId,
+    response_type: 'token',
+    redirect_uri: redirectUri,
+    // We join with a space here, and then replace + with %20 later because
+    // Spotify's strict OAuth parser sometimes rejects '+' for spaces.
+    scope: SCOPES_LIST.join(" "), 
+    show_dialog: 'true'
+  });
+
+  // Explicitly replace '+' with '%20' in the query string for the scope parameter.
+  // This is a known fix for 'unsupported_response_type' on Spotify.
+  const queryString = params.toString().replace(/\+/g, '%20');
+
+  return `https://accounts.spotify.com/authorize?${queryString}`;
 };
 
 export const getTokenFromUrl = (): { token: string | null, error: string | null } => {
