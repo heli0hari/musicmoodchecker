@@ -31,6 +31,7 @@ const App: React.FC = () => {
   });
 
   const [showSettings, setShowSettings] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
   
@@ -44,24 +45,36 @@ const App: React.FC = () => {
 
   const [token, setToken] = useState<string | null>(null);
 
-  // Handle Spotify Auth Callback
+  // Handle Spotify Auth Callback & Errors
   useEffect(() => {
-    const accessToken = getTokenFromUrl();
-    if (accessToken) {
+    const { token: accessToken, error } = getTokenFromUrl();
+    
+    if (error) {
+      setConnectionError(`Spotify Error: ${error}`);
+      setShowSettings(true);
+      window.location.hash = ""; // Clear error from URL
+    } else if (accessToken) {
       setToken(accessToken);
       window.location.hash = ""; // Clear token from URL
       setSpotifyState(prev => ({ ...prev, isConnected: true }));
+      setShowSettings(false);
+      setConnectionError(null);
     }
   }, []);
 
   const handleConnect = () => {
-    if (!clientId) {
+    // Sanitize ID to remove spaces
+    const cleanClientId = clientId.trim();
+    setClientId(cleanClientId);
+
+    if (!cleanClientId) {
+      setConnectionError("Client ID is missing.");
       setShowSettings(true);
       return;
     }
     
     // Save ID to storage so user doesn't have to enter it again
-    localStorage.setItem('spotify_client_id', clientId);
+    localStorage.setItem('spotify_client_id', cleanClientId);
 
     // IMPORTANT: Spotify is strict about Redirect URIs.
     // We enforce a trailing slash to match standard browser copy-paste behavior.
@@ -69,7 +82,7 @@ const App: React.FC = () => {
     const redirectUri = `${window.location.origin}/`; 
 
     console.log("Redirecting to Spotify with URI:", redirectUri);
-    window.location.href = getAuthUrl(clientId, redirectUri);
+    window.location.href = getAuthUrl(cleanClientId, redirectUri);
   };
 
   const handleToggleDemo = () => {
@@ -196,11 +209,19 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-bold mb-6 uppercase tracking-widest border-b border-dashed border-white/30 pb-2">
               CONFIG.SYS
             </h2>
+
+            {connectionError && (
+              <div className="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-200 text-xs font-mono">
+                <span className="font-bold">ERROR:</span> {connectionError}
+                <p className="mt-1 opacity-70">Ensure Client ID is correct and Redirect URI matches Spotify Dashboard.</p>
+              </div>
+            )}
+
             <div className="text-xs text-white/60 mb-6 font-mono leading-relaxed space-y-4">
               <div className="space-y-1">
                 <p>&gt; SETUP INSTRUCTIONS:</p>
                 <p>1. Go to <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">Spotify Developer Dashboard</a></p>
-                <p>2. Create an App and copy the <strong>Client ID</strong>.</p>
+                <p>2. Create an App and copy the <strong>Client ID</strong> (Not Client Secret).</p>
                 <p>3. Click "Edit Settings" in Spotify Dashboard.</p>
               </div>
               
@@ -209,7 +230,7 @@ const App: React.FC = () => {
                 <code className="text-green-400 block select-all text-xs bg-black/50 p-2 border border-white/10">
                   {`${window.location.origin}/`}
                 </code>
-                <p className="text-[9px] text-white/30 mt-1">*This changes based on where you run the app (Local vs Netlify). Ensure the URL above is in your "Redirect URIs" list.</p>
+                <p className="text-[9px] text-white/30 mt-1">*Copy exactly. This detects your current local or web address.</p>
               </div>
             </div>
 

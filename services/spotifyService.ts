@@ -9,14 +9,28 @@ const SCOPES = [
 ].join(" ");
 
 export const getAuthUrl = (clientId: string, redirectUri: string) => {
-  return `https://accounts.spotify.com/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(SCOPES)}&response_type=token&show_dialog=true`;
+  // Using URLSearchParams ensures proper encoding of special characters and spaces
+  const url = new URL("https://accounts.spotify.com/authorize");
+  url.searchParams.append("client_id", clientId);
+  url.searchParams.append("redirect_uri", redirectUri);
+  url.searchParams.append("scope", SCOPES);
+  url.searchParams.append("response_type", "token");
+  url.searchParams.append("show_dialog", "true");
+  
+  return url.toString();
 };
 
-export const getTokenFromUrl = (): string | null => {
+export const getTokenFromUrl = (): { token: string | null, error: string | null } => {
   const hash = window.location.hash;
-  if (!hash) return null;
+  if (!hash) return { token: null, error: null };
+  
+  // Remove the '#' character
   const params = new URLSearchParams(hash.substring(1));
-  return params.get("access_token");
+  
+  const error = params.get("error");
+  const token = params.get("access_token");
+
+  return { token, error };
 };
 
 // Updated to return more details including progress and playing status
