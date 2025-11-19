@@ -10,37 +10,91 @@ const SCOPES_LIST = [
   "playlist-modify-private"
 ];
 
-export const getAuthUrl = (clientId: string, redirectUri: string) => {
-  // Using URLSearchParams ensures all parameters are correctly encoded for the URL.
+// --- PKCE Helper Functions ---
+
+const generateRandomString = (length: number) => {
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+};
+
+const sha256 = async (plain: string) => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plain);
+  return window.crypto.subtle.digest('SHA-256', data);
+};
+
+const base64encode = (input: ArrayBuffer) => {
+  return btoa(String.fromCharCode(...new Uint8Array(input)))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+};
+
+// --- Auth Flow Functions ---
+
+export const redirectToSpotifyAuth = async (clientId: string, redirectUri: string) => {
+  const codeVerifier = generateRandomString(64);
+  const hashed = await sha256(codeVerifier);
+  const codeChallenge = base64encode(hashed);
+
+  // Store verifier locally for the callback step
+  window.localStorage.setItem('spotify_code_verifier', codeVerifier);
+
   const params = new URLSearchParams({
+    response_type: 'code', // Using Authorization Code Flow
     client_id: clientId,
-    response_type: 'token',
+    scope: SCOPES_LIST.join(" "),
+    code_challenge_method: 'S256',
+    code_challenge: codeChallenge,
     redirect_uri: redirectUri,
-    // We join with a space here, and then replace + with %20 later because
-    // Spotify's strict OAuth parser sometimes rejects '+' for spaces.
-    scope: SCOPES_LIST.join(" "), 
-    show_dialog: 'true'
   });
 
-  // Explicitly replace '+' with '%20' in the query string for the scope parameter.
-  // This is a known fix for 'unsupported_response_type' on Spotify.
-  const queryString = params.toString().replace(/\+/g, '%20');
-
-  return `https://accounts.spotify.com/authorize?${queryString}`;
+  document.location = `https://accounts.spotify.com/authorize?${params.toString()}`;
 };
 
-export const getTokenFromUrl = (): { token: string | null, error: string | null } => {
-  const hash = window.location.hash;
-  if (!hash) return { token: null, error: null };
-  
-  // Remove the '#' character
-  const params = new URLSearchParams(hash.substring(1));
-  
-  const error = params.get("error");
-  const token = params.get("access_token");
+export const getAccessToken = async (clientId: string, code: string, redirectUri: string): Promise<string | null> => {
+  const codeVerifier = window.localStorage.getItem('spotify_code_verifier');
 
-  return { token, error };
+  if (!codeVerifier) {
+    console.error("No code verifier found");
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    grant_type: 'authorization_code',
+    code: code,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier,
+  });
+
+  try {
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params
+    });
+
+    const data = await response.json();
+    
+    if (data.access_token) {
+      // Clear verifier after success
+      window.localStorage.removeItem('spotify_code_verifier');
+      return data.access_token;
+    } else {
+      console.error("Token exchange failed:", data);
+      return null;
+    }
+  } catch (e) {
+    console.error("Error fetching access token:", e);
+    return null;
+  }
 };
+
+// --- Data Fetching Functions ---
 
 // Updated to return more details including progress and playing status
 export const fetchCurrentTrack = async (token: string): Promise<{ track: SpotifyTrack | null, progress_ms: number, is_playing: boolean }> => {

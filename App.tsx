@@ -3,7 +3,7 @@ import Scene from './components/Scene';
 import Sidebar from './components/Sidebar';
 import MediaPlayer from './components/MediaPlayer';
 import { MoodState, SpotifyState } from './types';
-import { getAuthUrl, getTokenFromUrl, fetchCurrentTrack, fetchAudioFeatures } from './services/spotifyService';
+import { redirectToSpotifyAuth, getAccessToken, fetchCurrentTrack, fetchAudioFeatures } from './services/spotifyService';
 
 const INITIAL_MOOD: MoodState = {
   energy: 0.5,
@@ -45,25 +45,42 @@ const App: React.FC = () => {
 
   const [token, setToken] = useState<string | null>(null);
 
-  // Handle Spotify Auth Callback
+  // Handle Spotify Auth Callback (PKCE Flow)
   useEffect(() => {
-    const { token: accessToken, error } = getTokenFromUrl();
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const error = params.get('error');
     
     if (error) {
       console.error("Spotify Auth Error:", error);
       setConnectionError(`Spotify says: "${error}"`);
       setShowSettings(true);
-      window.location.hash = ""; 
-    } else if (accessToken) {
-      setToken(accessToken);
-      window.location.hash = "";
-      setSpotifyState(prev => ({ ...prev, isConnected: true }));
-      setShowSettings(false);
-      setConnectionError(null);
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (code) {
+      // Exchange code for token
+      const storedClientId = localStorage.getItem('spotify_client_id') || clientId;
+      const redirectUri = `${window.location.origin}/`; 
+
+      if (storedClientId) {
+        getAccessToken(storedClientId, code, redirectUri).then(accessToken => {
+           if (accessToken) {
+             setToken(accessToken);
+             setSpotifyState(prev => ({ ...prev, isConnected: true }));
+             setShowSettings(false);
+             setConnectionError(null);
+             // Remove code from URL so we don't try to use it again
+             window.history.replaceState({}, document.title, window.location.pathname);
+           } else {
+             setConnectionError("Failed to exchange authorization code for token.");
+             setShowSettings(true);
+           }
+        });
+      }
     }
   }, []);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     const cleanClientId = clientId.replace(/[^a-zA-Z0-9]/g, "");
     setClientId(cleanClientId);
 
@@ -81,9 +98,9 @@ const App: React.FC = () => {
     
     localStorage.setItem('spotify_client_id', cleanClientId);
     
-    // Use origin + slash to match dashboard exactly
+    // PKCE Flow
     const redirectUri = `${window.location.origin}/`; 
-    window.location.href = getAuthUrl(cleanClientId, redirectUri);
+    await redirectToSpotifyAuth(cleanClientId, redirectUri);
   };
 
   const handleToggleDemo = () => {
@@ -208,7 +225,6 @@ const App: React.FC = () => {
             {connectionError && (
               <div className="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-200 text-xs font-mono">
                 <span className="font-bold">ERROR:</span> {connectionError}
-                <p className="mt-1 opacity-70">If error is "unsupported_response_type", it's often fixed by the app code update (automatically applied).</p>
               </div>
             )}
 
