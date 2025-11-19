@@ -1,7 +1,9 @@
-declare var process: {
-  env: {
+/// <reference types="vite/client" />
+
+declare namespace NodeJS {
+  interface ProcessEnv {
     API_KEY: string;
     SPOTIFY_CLIENT_ID: string;
-    [key: string]: any;
+    [key: string]: string | undefined;
   }
 }
