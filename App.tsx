@@ -191,7 +191,7 @@ const App: React.FC = () => {
   }, [token, spotifyState.currentTrack?.id, isDemoMode]);
 
   return (
-    <div className="w-full h-screen flex flex-col md:flex-row bg-[#050505] text-[#e0e0e0] overflow-hidden relative font-pixel">
+    <div className="w-full h-[100dvh] flex flex-col md:flex-row bg-[#050505] text-[#e0e0e0] overflow-hidden relative font-pixel">
       {/* Settings Modal */}
       {showSettings && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
@@ -304,26 +304,26 @@ const App: React.FC = () => {
 
        {/* Sidebar (Mobile) - Collapsible */}
        <div 
-         className={`absolute bottom-0 w-full md:hidden z-20 transition-all duration-300 ease-out border-t border-white/20 bg-black/90 backdrop-blur-md flex flex-col ${isMobileMenuOpen ? 'h-[45vh]' : 'h-10'}`}
+         className={`absolute bottom-0 w-full md:hidden z-50 transition-all duration-300 ease-out border-t border-white/20 bg-black/90 backdrop-blur-md flex flex-col shadow-[0px_-10px_40px_rgba(0,0,0,0.8)] ${isMobileMenuOpen ? 'h-[65vh]' : 'h-28'}`}
        >
           {/* Touch Handle / Toggle */}
           <div 
-             className="w-full h-10 min-h-[2.5rem] flex items-center justify-center flex-shrink-0 cursor-pointer bg-white/5 hover:bg-white/10 active:bg-white/20 touch-none"
+             className="w-full h-14 flex items-center justify-center flex-shrink-0 cursor-pointer bg-white/10 hover:bg-white/20 active:bg-white/30 touch-none border-b border-white/5 transition-colors"
              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
              onTouchStart={onTouchStart}
              onTouchMove={onTouchMove}
              onTouchEnd={onTouchEnd}
           >
               <div className="flex flex-col items-center gap-1">
-                  <div className="w-12 h-1 bg-white/20 rounded-full"></div>
-                  <span className="text-[8px] uppercase text-white/30 tracking-widest">
-                      {isMobileMenuOpen ? "Swipe Down to Hide" : "Swipe Up to Show"}
+                  <div className="w-16 h-1.5 bg-white/40 rounded-full mb-1 shadow-lg"></div>
+                  <span className="text-[10px] uppercase text-white font-bold tracking-widest drop-shadow-md">
+                      {isMobileMenuOpen ? "Swipe Down" : "Swipe Up / Tap"}
                   </span>
               </div>
           </div>
 
           <div className="flex-1 overflow-hidden relative">
-             <div className="absolute inset-0 overflow-auto">
+             <div className="absolute inset-0 overflow-auto pb-10">
                 <Sidebar 
                   currentMood={mood} 
                   spotifyState={spotifyState}
