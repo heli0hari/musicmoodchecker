@@ -1,3 +1,4 @@
+
 import { SpotifyTrack, AudioFeatures } from "../types";
 
 const SCOPES_LIST = [
@@ -38,11 +39,10 @@ export const redirectToSpotifyAuth = async (clientId: string, redirectUri: strin
   const hashed = await sha256(codeVerifier);
   const codeChallenge = base64encode(hashed);
 
-  // Store verifier locally for the callback step
   window.localStorage.setItem('spotify_code_verifier', codeVerifier);
 
   const params = new URLSearchParams({
-    response_type: 'code', // Using Authorization Code Flow
+    response_type: 'code',
     client_id: clientId,
     scope: SCOPES_LIST.join(" "),
     code_challenge_method: 'S256',
@@ -72,16 +72,12 @@ export const getAccessToken = async (clientId: string, code: string, redirectUri
   try {
     const response = await fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params
     });
 
     const data = await response.json();
-    
     if (data.access_token) {
-      // Clear verifier after success
       window.localStorage.removeItem('spotify_code_verifier');
       return data.access_token;
     } else {
@@ -96,7 +92,6 @@ export const getAccessToken = async (clientId: string, code: string, redirectUri
 
 // --- Data Fetching Functions ---
 
-// Updated to return more details including progress and playing status
 export const fetchCurrentTrack = async (token: string): Promise<{ track: SpotifyTrack | null, progress_ms: number, is_playing: boolean }> => {
   try {
     const res = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
@@ -114,9 +109,6 @@ export const fetchCurrentTrack = async (token: string): Promise<{ track: Spotify
     }
 
     const track = data.item as SpotifyTrack;
-    
-    // Local files might have null IDs or IDs that don't work with Audio Features
-    // We still return the track so the UI can show the title, but the calling function checks ID
     
     return { 
       track, 
@@ -144,10 +136,12 @@ export const fetchAudioFeatures = async (token: string, trackId: string): Promis
 
 // --- Controls ---
 
-export const playTrack = async (token: string) => {
+export const playTrack = async (token: string, uri?: string) => {
+  const body = uri ? JSON.stringify({ uris: [uri] }) : undefined;
   await fetch("https://api.spotify.com/v1/me/player/play", {
     method: "PUT",
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body
   });
 };
 
@@ -172,6 +166,32 @@ export const previousTrack = async (token: string) => {
   });
 };
 
+export const seekToPosition = async (token: string, positionMs: number) => {
+  await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.floor(positionMs)}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const addItemToQueue = async (token: string, uri: string) => {
+  await fetch(`https://api.spotify.com/v1/me/player/queue?uri=${uri}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
+
+export const setSpotifyVolume = async (token: string, volumePercent: number) => {
+  const clamped = Math.max(0, Math.min(100, Math.round(volumePercent)));
+  try {
+    await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${clamped}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch (e) {
+    console.error("Error setting Spotify volume", e);
+  }
+};
+
 // --- Playlist Management Functions ---
 
 export const getUserProfile = async (token: string) => {
@@ -194,6 +214,20 @@ export const searchTrack = async (token: string, query: string): Promise<string 
   }
 };
 
+export const searchSpotifyTracks = async (token: string, query: string): Promise<SpotifyTrack[]> => {
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=3`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!data.tracks?.items) return [];
+    return data.tracks.items as SpotifyTrack[];
+  } catch (e) {
+    console.error("Search failed for:", query, e);
+    return [];
+  }
+};
+
 export const createPlaylist = async (token: string, userId: string, name: string, description: string) => {
   const res = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
     method: "POST",
@@ -201,11 +235,7 @@ export const createPlaylist = async (token: string, userId: string, name: string
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ 
-      name, 
-      description, 
-      public: false // defaulting to private for safety
-    })
+    body: JSON.stringify({ name, description, public: false })
   });
   return await res.json();
 };

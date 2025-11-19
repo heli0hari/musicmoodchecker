@@ -43,6 +43,22 @@ export interface SpotifyTrack {
   artists: { name: string }[];
   album: { images: { url: string }[] };
   duration_ms: number;
+  uri?: string;
+}
+
+export interface YoutubeTrack {
+  id: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  duration_ms?: number; // Estimated
+}
+
+export interface QueueItem {
+  platform: 'SPOTIFY' | 'YOUTUBE';
+  spotifyTrack?: SpotifyTrack;
+  youtubeTrack?: YoutubeTrack;
+  addedBy: string;
 }
 
 export interface AudioFeatures {
@@ -58,9 +74,12 @@ export interface AudioFeatures {
 
 export interface SpotifyState {
   isConnected: boolean;
+  activeSource: 'SPOTIFY' | 'YOUTUBE';
   currentTrack: SpotifyTrack | null;
+  youtubeTrack: YoutubeTrack | null; // Currently playing YT track
   features: AudioFeatures | null;
   progress_ms: number;
   isPlaying: boolean;
-  visualConfig?: VisualConfig; // Added strictly for the scene
+  visualConfig?: VisualConfig;
+  queue: QueueItem[];
 }

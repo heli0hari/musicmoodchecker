@@ -10,6 +10,7 @@ interface SceneProps {
   isAudioActive: boolean;
   spotifyState: SpotifyState;
   isMobileMenuOpen: boolean;
+  onSeek: (percentage: number) => void;
 }
 
 const Scene: React.FC<SceneProps> = ({ 
@@ -17,7 +18,8 @@ const Scene: React.FC<SceneProps> = ({
   visualConfig, 
   isAudioActive,
   spotifyState,
-  isMobileMenuOpen
+  isMobileMenuOpen,
+  onSeek
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const p5InstanceRef = useRef<p5 | null>(null);
@@ -35,16 +37,14 @@ const Scene: React.FC<SceneProps> = ({
 
     const sketch = (p: p5) => {
       let timeOffset = 0;
-      let hueOffset = 0; // Persistent hue for audio reactivity
+      let hueOffset = 0; 
       
       let smoothBass = 0;
       let smoothMid = 0;
       let smoothTreble = 0;
       
-      // For Spotify-only mode simulation
       let simulatedBeat = 0;
       
-      // Particle System for Background
       const particles: any[] = [];
       const numParticles = 80;
 
@@ -53,7 +53,6 @@ const Scene: React.FC<SceneProps> = ({
         p.createCanvas(containerRef.current.clientWidth, containerRef.current.clientHeight);
         p.frameRate(60);
         
-        // Init particles
         for(let i=0; i<numParticles; i++) {
             particles.push({
                 x: p.random(p.width),
@@ -67,6 +66,32 @@ const Scene: React.FC<SceneProps> = ({
       p.windowResized = () => {
         if (containerRef.current) {
           p.resizeCanvas(containerRef.current.clientWidth, containerRef.current.clientHeight);
+        }
+      };
+
+      // Interaction for Seeking
+      p.mousePressed = () => {
+        const state = stateRef.current;
+        const cx = p.width / 2;
+        const cy = p.height / 2;
+        const minDim = Math.min(p.width, p.height);
+        const baseRadius = minDim * 0.20;
+        const ringRadius = baseRadius * 2.0;
+        
+        // Calculate distance from center
+        const d = p.dist(p.mouseX, p.mouseY, cx, cy);
+        
+        // Allow clicking near the ring (with some tolerance)
+        if (d > ringRadius * 0.8 && d < ringRadius * 1.2) {
+            let angle = p.atan2(p.mouseY - cy, p.mouseX - cx);
+            // Normalize angle to 0 - TWO_PI starting from -PI/2 (12 o'clock)
+            // Standard atan2: -PI to PI. -PI/2 is up.
+            
+            let correctedAngle = angle + p.PI/2;
+            if (correctedAngle < 0) correctedAngle += p.TWO_PI;
+            
+            const percentage = correctedAngle / p.TWO_PI;
+            onSeek(percentage);
         }
       };
 
@@ -84,16 +109,13 @@ const Scene: React.FC<SceneProps> = ({
 
         let bass = 0.05, mid = 0.05, treble = 0.05;
 
-        // --- INPUT HANDLING ---
         if (state.isAudioActive) {
-           // MODE 1: REAL MICROPHONE
            const audioData = audioManager.getAnalysis();
            bass = audioData.bass;
            mid = audioData.mid;
            treble = audioData.treble;
         } 
         else if (state.spotifyState.isPlaying && state.spotifyState.features) {
-           // MODE 2: SPOTIFY SIMULATION
            const bpm = state.spotifyState.features.tempo;
            const energy = state.spotifyState.features.energy;
            
@@ -101,9 +123,7 @@ const Scene: React.FC<SceneProps> = ({
            const msPerBeat = 1000 / bps;
            const now = p.millis();
            
-           // Create a kick drum envelope
            const beatPhase = (now % msPerBeat) / msPerBeat;
-           // Sharp attack, expo decay
            const kick = Math.pow(1 - beatPhase, 4) * energy; 
            
            simulatedBeat = p.lerp(simulatedBeat, kick, 0.2);
@@ -113,46 +133,32 @@ const Scene: React.FC<SceneProps> = ({
            treble = 0.05 + (energy * 0.1);
         }
         else {
-           // MODE 3: IDLE
            const idlePulse = (Math.sin(p.millis() / 1000) + 1) * 0.5;
            bass = 0.1 + (idlePulse * 0.05);
         }
 
-        // Smoothing
         smoothBass = p.lerp(smoothBass, bass, 0.15);
         smoothMid = p.lerp(smoothMid, mid, 0.1);
         smoothTreble = p.lerp(smoothTreble, treble, 0.1);
 
-        // --- COLOR LOGIC ---
         let cPrimary: p5.Color;
-        let cSecondary: p5.Color;
 
         if (state.isAudioActive) {
-            // Dynamic HSB Coloring
-            // We explicitly set max alpha to 255 to ensure consistency with RGB mode
             p.colorMode(p.HSB, 360, 100, 100, 255);
             
-            // Hue cycles continuously but jumps forward on bass hits
             hueOffset += 0.2 + (smoothBass * 3.0); 
             const h = hueOffset % 360;
-            const s = 50 + (smoothMid * 50);     // Mid tones drive saturation
-            const b = 80 + (smoothBass * 20);    // Bass drives brightness
+            const s = 50 + (smoothMid * 50);     
+            const b = 80 + (smoothBass * 20);    
             
             cPrimary = p.color(h, s, Math.min(b, 100));
-            // Complementary accent
-            cSecondary = p.color((h + 180) % 360, s * 0.8, b * 0.6);
         } else {
-            // Static/Spotify Coloring
             p.colorMode(p.RGB, 255);
             const baseColorHex = state.visualConfig?.primaryColor || '#8b5cf6';
             cPrimary = p.color(baseColorHex);
-            cSecondary = p.color(baseColorHex);
-            cSecondary.setAlpha(100);
         }
 
-        // Capture the string representation before pushing state for particles
         const primaryColorStr = cPrimary.toString();
-
         // @ts-ignore
         const ctx = p.drawingContext as CanvasRenderingContext2D;
 
@@ -164,16 +170,19 @@ const Scene: React.FC<SceneProps> = ({
         
         timeOffset += 0.01 + (smoothBass * 0.05);
 
-        // --- PARTICLE SYSTEM (BACKGROUND) ---
+        // --- PARTICLES ---
         p.push();
-        // Force RGB mode for consistent alpha handling regardless of main visualizer mode
         p.colorMode(p.RGB, 255);
         p.noStroke();
         
-        // Create color from the primary string
-        let particleColor = p.color(primaryColorStr);
+        // Use hex string to force RGB interpretation for particles to avoid HSB scaling issues
+        let particleColor = p.color(state.visualConfig?.primaryColor || '#8b5cf6');
+        if (state.isAudioActive) {
+            // For HSB mode, convert the dynamic color to RGB string then back to color object inside this RGB context
+            // Or simpler: just use a white/grey tint for stars in HSB mode to be safe
+            particleColor = p.color(255, 255, 255);
+        }
         
-        // Set alpha: Base 50 (approx 20%) + Bass boost up to +150
         const particleAlpha = 50 + (smoothBass * 150);
         particleColor.setAlpha(Math.min(particleAlpha, 255));
         
@@ -181,47 +190,54 @@ const Scene: React.FC<SceneProps> = ({
 
         for (let i = 0; i < numParticles; i++) {
             let part = particles[i];
-            
-            // Move particles
-            // Very slow drift (0.02) + bass burst
             part.y -= part.z * (0.02 + (smoothBass * 2.0)); 
             
-            // Wrap around
             if (part.y < 0) {
                 part.y = p.height;
                 part.x = p.random(p.width);
             }
             
-            // Render square pixels for retro look
             const size = part.size * (1 + smoothBass);
             p.rect(part.x, part.y, size, size);
         }
         p.pop();
 
-        // --- VISUALIZER SETUP ---
         p.translate(cx, cy);
         const volatility = 30 + (smoothMid * 100) + (smoothTreble * 150);
 
-        // --- PROGRESS RING (ORGANIC) ---
-        // Logic: Show if Desktop OR (Mobile AND Menu Closed)
+        // --- PROGRESS RING ---
         const isMobile = p.width < 768;
         const showRing = !isMobile || (isMobile && !state.isMobileMenuOpen);
+        
+        // Determine track validity based on platform
+        const isTrackPlaying = state.spotifyState.activeSource === 'SPOTIFY' 
+            ? (state.spotifyState.isPlaying && !!state.spotifyState.currentTrack)
+            : (state.spotifyState.isPlaying && !!state.spotifyState.youtubeTrack);
 
-        if (state.spotifyState.isPlaying && state.spotifyState.currentTrack && showRing) {
-            const duration = state.spotifyState.currentTrack.duration_ms;
-            const progress = state.spotifyState.progress_ms;
+        if (isTrackPlaying && showRing) {
+            let duration = 1;
+            let progress = 0;
+
+            if (state.spotifyState.activeSource === 'SPOTIFY' && state.spotifyState.currentTrack) {
+                 duration = state.spotifyState.currentTrack.duration_ms;
+                 progress = state.spotifyState.progress_ms;
+            } else if (state.spotifyState.activeSource === 'YOUTUBE' && state.spotifyState.youtubeTrack) {
+                 duration = state.spotifyState.youtubeTrack.duration_ms || 240000;
+                 progress = state.spotifyState.progress_ms;
+            }
+
             const progressRatio = Math.min(progress / duration, 1.0);
             const ringRadius = baseRadius * 2.0;
 
-            // Background Track (Ghost)
+            // Ghost Track
             p.noFill();
             
-            // Use PRIMARY color for the ghost track to ensure it matches the visualizer theme.
-            // Previously this used secondary/complementary which looked 'weird' or mismatched.
+            // Ensure consistent color mode interpretation
+            // We use cPrimary which is already computed in correct mode (RGB or HSB)
             let trackColor = p.color(cPrimary.toString());
             
-            // Set consistent low opacity (0-255 scale)
-            trackColor.setAlpha(50); 
+            // In HSB mode (360, 100, 100, 255), setAlpha(50) works same as RGB
+            trackColor.setAlpha(40); 
             
             p.stroke(trackColor);
             p.strokeWeight(2);
@@ -229,14 +245,13 @@ const Scene: React.FC<SceneProps> = ({
 
             p.beginShape();
             for (let a = -p.PI/2; a < p.TWO_PI - p.PI/2; a += 0.1) {
-                // Deform based on noise so it's not a perfect circle
                 const off = getNoiseRadius(a, timeOffset * 0.5, 200, 20, 1);
                 const r = ringRadius + off;
                 p.vertex(r * Math.cos(a), r * Math.sin(a));
             }
             p.endShape(p.CLOSE);
 
-            // Active Progress (Bright)
+            // Active Progress
             const endAngle = -p.PI/2 + (progressRatio * p.TWO_PI);
             p.stroke(cPrimary);
             p.strokeWeight(4);
@@ -244,26 +259,31 @@ const Scene: React.FC<SceneProps> = ({
             ctx.shadowColor = cPrimary.toString();
 
             p.beginShape();
-            for (let a = -p.PI/2; a <= endAngle; a += 0.05) {
-                 const off = getNoiseRadius(a, timeOffset * 0.5, 200, 20 + (smoothBass * 10), 1);
-                 const r = ringRadius + off;
-                 p.vertex(r * Math.cos(a), r * Math.sin(a));
+            // Loop with small steps to make noise continuous
+            if (progressRatio >= 0.99) {
+                for (let a = -p.PI/2; a <= p.TWO_PI - p.PI/2; a += 0.05) {
+                    const off = getNoiseRadius(a, timeOffset * 0.5, 200, 20 + (smoothBass * 10), 1);
+                    const r = ringRadius + off;
+                    p.vertex(r * Math.cos(a), r * Math.sin(a));
+                }
+                p.endShape(p.CLOSE);
+            } else {
+                for (let a = -p.PI/2; a <= endAngle; a += 0.05) {
+                     const off = getNoiseRadius(a, timeOffset * 0.5, 200, 20 + (smoothBass * 10), 1);
+                     const r = ringRadius + off;
+                     p.vertex(r * Math.cos(a), r * Math.sin(a));
+                }
+                p.endShape();
             }
-            p.endShape();
         }
 
-        // --- MAIN BLOB ---
-        // 1. Outer Echo Ring
+        // --- MAIN VISUALIZER ---
         p.noFill();
         p.strokeWeight(1);
         
-        // Use primary color
         let echoColor = p.color(cPrimary.toString());
-        
-        // Alpha handling - consistent 0-255 scale
         const echoAlpha = state.isAudioActive ? 60 : 100; 
         echoColor.setAlpha(echoAlpha * smoothMid);
-        
         p.stroke(echoColor);
         ctx.shadowBlur = 0;
         
@@ -274,11 +294,9 @@ const Scene: React.FC<SceneProps> = ({
         }
         p.endShape(p.CLOSE);
 
-        // 2. Main Blob
         p.strokeWeight(4 + (smoothBass * 6));
         p.stroke(cPrimary);
         p.noFill();
-        
         ctx.shadowBlur = 20 + (smoothBass * 40);
         ctx.shadowColor = cPrimary.toString();
 
@@ -289,15 +307,6 @@ const Scene: React.FC<SceneProps> = ({
             p.vertex(r * Math.cos(a), r * Math.sin(a));
         }
         p.endShape(p.CLOSE);
-
-        // 3. Center Core
-        if (smoothTreble > 0.1) {
-            p.fill(cPrimary);
-            p.noStroke();
-            ctx.shadowBlur = 50;
-            const coreSize = (baseRadius * 0.3) * smoothTreble;
-            p.circle(0, 0, coreSize);
-        }
       };
     };
 
@@ -311,8 +320,7 @@ const Scene: React.FC<SceneProps> = ({
   }, []);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative bg-black overflow-hidden">
-        {/* RETRO GRID OVERLAY */}
+    <div ref={containerRef} className="w-full h-full relative bg-black overflow-hidden cursor-pointer" title="Click ring to seek">
         <div className="absolute inset-0 pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03]"></div>
     </div>
   );

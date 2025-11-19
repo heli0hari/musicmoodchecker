@@ -1,7 +1,8 @@
+
 export class AudioAnalyzer {
   audioContext: AudioContext | null = null;
   analyser: AnalyserNode | null = null;
-  source: MediaStreamAudioSourceNode | null = null;
+  source: MediaStreamAudioSourceNode | MediaElementAudioSourceNode | null = null;
   dataArray: Uint8Array | null = null;
   stream: MediaStream | null = null;
 
@@ -9,60 +10,78 @@ export class AudioAnalyzer {
     // Initialize lazily
   }
 
-  async start() {
-    this.stop(); // Cleanup previous session
+  ensureContext() {
+    if (!this.audioContext) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+            this.audioContext = new AudioContextClass();
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 2048;
+            this.analyser.smoothingTimeConstant = 0.85;
+            this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+        }
+    }
+    // Resume if suspended (browser policy)
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+    }
+    return !!this.audioContext;
+  }
+
+  // Method 1: Connect to Microphone
+  async startMic() {
+    this.stop(); // Cleanup previous
+    if (!this.ensureContext()) return false;
 
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) {
-        alert("Web Audio API is not supported in this browser.");
-        return false;
-      }
-      
-      this.audioContext = new AudioContextClass();
-      this.analyser = this.audioContext.createAnalyser();
-      
-      // FFT Size determines resolution. 2048 = 1024 freq bins.
-      this.analyser.fftSize = 2048; 
-      this.analyser.smoothingTimeConstant = 0.85; 
-
-      // Request Microphone Access
-      try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } catch (err: any) {
-        console.warn("Microphone access denied:", err);
-        alert("Microphone access was denied. Please allow microphone access to use Real-time Sync.");
-        return false;
-      }
-
-      this.source = this.audioContext.createMediaStreamSource(this.stream);
-      this.source.connect(this.analyser);
-
-      this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      this.source = this.audioContext!.createMediaStreamSource(this.stream);
+      this.source.connect(this.analyser!);
       return true;
-    } catch (err: any) {
-      console.error("Audio Init Error:", err);
+    } catch (err) {
+      console.warn("Mic access denied", err);
       return false;
+    }
+  }
+
+  // Method 2: Connect to <audio> element (YouTube/OpenLib)
+  connectMediaElement(element: HTMLMediaElement) {
+    this.stop();
+    if (!this.ensureContext()) return false;
+
+    try {
+        // Create source from element
+        // Note: element must have crossorigin="anonymous" if loading from external URL
+        if (!(element as any)._sourceNode) {
+            (element as any)._sourceNode = this.audioContext!.createMediaElementSource(element);
+        }
+        this.source = (element as any)._sourceNode;
+        
+        // Connect to analyser AND destination (so we can hear it)
+        this.source!.connect(this.analyser!);
+        this.analyser!.connect(this.audioContext!.destination);
+        return true;
+    } catch (e) {
+        console.error("Error connecting media element", e);
+        return false;
     }
   }
 
   stop() {
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
     }
-    if (this.audioContext) {
-      this.audioContext.close();
+    // Disconnect source but don't close context if possible to reuse
+    if (this.source) {
+        try { this.source.disconnect(); } catch(e) {}
+        this.source = null;
     }
-    this.audioContext = null;
-    this.analyser = null;
-    this.source = null;
   }
 
   getAnalysis() {
     if (!this.analyser || !this.dataArray) return { bass: 0, mid: 0, treble: 0, raw: new Uint8Array(0) };
 
-    // Cast to any to avoid TypeScript "ArrayBufferLike vs ArrayBuffer" mismatch error
     this.analyser.getByteFrequencyData(this.dataArray as any);
 
     const bassCount = Math.floor(this.dataArray.length * 0.05); 
