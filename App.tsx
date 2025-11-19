@@ -12,15 +12,27 @@ const INITIAL_MOOD: MoodState = {
   cognition: 0.6
 };
 
-// NOTE: In a real app, this should be in a secure environment variable or user input.
-// Now supports loading from .env for easier local dev: VITE_SPOTIFY_CLIENT_ID
-const DEFAULT_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || ""; 
-
 const App: React.FC = () => {
-  const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
-  const [clientId, setClientId] = useState<string>(DEFAULT_CLIENT_ID);
+  // Initialize Client ID with priority:
+  // 1. LocalStorage (Saved by user previously)
+  // 2. Vite Environment Variable (VITE_SPOTIFY_CLIENT_ID)
+  // 3. Process Env (Fallback)
+  const [clientId, setClientId] = useState<string>(() => {
+    const saved = localStorage.getItem('spotify_client_id');
+    if (saved) return saved;
+    
+    // @ts-ignore - Vite specific
+    if (import.meta.env && import.meta.env.VITE_SPOTIFY_CLIENT_ID) {
+      // @ts-ignore
+      return import.meta.env.VITE_SPOTIFY_CLIENT_ID;
+    }
+
+    return process.env.SPOTIFY_CLIENT_ID || "";
+  });
+
   const [showSettings, setShowSettings] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
   
   const [spotifyState, setSpotifyState] = useState<SpotifyState>({
     isConnected: false,
@@ -47,7 +59,12 @@ const App: React.FC = () => {
       setShowSettings(true);
       return;
     }
+    
+    // Save ID to storage so user doesn't have to enter it again
+    localStorage.setItem('spotify_client_id', clientId);
+
     const redirectUri = window.location.origin;
+    console.log("Redirecting to Spotify with URI:", redirectUri);
     window.location.href = getAuthUrl(clientId, redirectUri);
   };
 
@@ -175,13 +192,15 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-bold mb-6 uppercase tracking-widest border-b border-dashed border-white/30 pb-2">
               CONFIG.SYS
             </h2>
-            <p className="text-xs text-white/60 mb-6 font-mono leading-relaxed">
-              &gt; INITIATE CONNECTION PROTOCOL<br/>
-              &gt; REQUIRED: CLIENT_ID<br/>
-              &gt; SOURCE: <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">developer.spotify.com</a>
-              <br/><br/>
-              &gt; ADD REDIRECT URI: <span className="bg-white/10 px-1">{window.location.origin}</span>
-            </p>
+            <div className="text-xs text-white/60 mb-6 font-mono leading-relaxed space-y-2">
+              <p className="text-red-400">&gt; ERROR: CLIENT_ID NOT DETECTED</p>
+              <p>&gt; PLEASE ENTER SPOTIFY CLIENT ID:</p>
+              <p>&gt; SOURCE: <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">developer.spotify.com</a></p>
+              <div className="p-2 bg-white/5 border border-white/10 mt-2">
+                <p className="text-[10px] uppercase text-white/40">Required Redirect URI:</p>
+                <code className="text-green-400 block mt-1 select-all">{window.location.origin}</code>
+              </div>
+            </div>
             <input 
               type="text" 
               placeholder="ENTER_CLIENT_ID..."
@@ -200,7 +219,7 @@ const App: React.FC = () => {
                 onClick={handleConnect} 
                 className="px-6 py-2 bg-white text-black text-sm uppercase font-bold border border-white hover:bg-black hover:text-white transition-colors"
               >
-                Connect
+                Save & Connect
               </button>
             </div>
           </div>
