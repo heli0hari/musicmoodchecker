@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Scene from './components/Scene';
 import Sidebar from './components/Sidebar';
 import MediaPlayer from './components/MediaPlayer';
@@ -30,6 +30,11 @@ const App: React.FC = () => {
   const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
   const [showClientId, setShowClientId] = useState(false); // Toggle ID visibility
   
+  // Mobile Menu State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
+  const touchStartY = useRef(0);
+  const touchEndY = useRef(0);
+
   const [spotifyState, setSpotifyState] = useState<SpotifyState>({
     isConnected: false,
     currentTrack: null,
@@ -89,6 +94,33 @@ const App: React.FC = () => {
     } else {
       setIsDemoMode(true);
     }
+  };
+
+  // Swipe Handlers
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.targetTouches[0].clientY;
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    touchEndY.current = e.targetTouches[0].clientY;
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStartY.current || !touchEndY.current) return;
+    const distance = touchStartY.current - touchEndY.current;
+    const isSwipeUp = distance > 50;
+    const isSwipeDown = distance < -50;
+
+    if (isSwipeDown) {
+        setIsMobileMenuOpen(false);
+    }
+    if (isSwipeUp) {
+        setIsMobileMenuOpen(true);
+    }
+    
+    // Reset
+    touchStartY.current = 0;
+    touchEndY.current = 0;
   };
 
   // Demo Loop
@@ -270,16 +302,38 @@ const App: React.FC = () => {
         [ SYS_CONFIG ]
       </button>
 
-       {/* Sidebar (Mobile) */}
-       <div className="absolute bottom-0 w-full h-[45vh] md:hidden z-20 bg-black/90 border-t border-white/20 overflow-auto">
-          <Sidebar 
-            currentMood={mood} 
-            spotifyState={spotifyState}
-            onConnectSpotify={handleConnect}
-            onToggleDemo={handleToggleDemo}
-            isDemoMode={isDemoMode}
-            token={token}
-          />
+       {/* Sidebar (Mobile) - Collapsible */}
+       <div 
+         className={`absolute bottom-0 w-full md:hidden z-20 transition-all duration-300 ease-out border-t border-white/20 bg-black/90 backdrop-blur-md flex flex-col ${isMobileMenuOpen ? 'h-[45vh]' : 'h-10'}`}
+       >
+          {/* Touch Handle / Toggle */}
+          <div 
+             className="w-full h-10 min-h-[2.5rem] flex items-center justify-center flex-shrink-0 cursor-pointer bg-white/5 hover:bg-white/10 active:bg-white/20 touch-none"
+             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+             onTouchStart={onTouchStart}
+             onTouchMove={onTouchMove}
+             onTouchEnd={onTouchEnd}
+          >
+              <div className="flex flex-col items-center gap-1">
+                  <div className="w-12 h-1 bg-white/20 rounded-full"></div>
+                  <span className="text-[8px] uppercase text-white/30 tracking-widest">
+                      {isMobileMenuOpen ? "Swipe Down to Hide" : "Swipe Up to Show"}
+                  </span>
+              </div>
+          </div>
+
+          <div className="flex-1 overflow-hidden relative">
+             <div className="absolute inset-0 overflow-auto">
+                <Sidebar 
+                  currentMood={mood} 
+                  spotifyState={spotifyState}
+                  onConnectSpotify={handleConnect}
+                  onToggleDemo={handleToggleDemo}
+                  isDemoMode={isDemoMode}
+                  token={token}
+                />
+             </div>
+          </div>
        </div>
     </div>
   );

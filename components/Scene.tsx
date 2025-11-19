@@ -119,17 +119,17 @@ const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boole
         }
     }
 
-    let timeScale = 0.02; 
+    let timeScale = 0.01; 
     let driftAmp = 0.5;
 
     if (isRelaxed) {
-      timeScale = 0.005;
+      timeScale = 0.002;
       driftAmp = 1.2;
     } else if (isHighEnergy) {
-      timeScale = 0.04 + (currentMood.energy * 0.04);
+      timeScale = 0.02 + (currentMood.energy * 0.02);
       driftAmp = 0.4;          
     } else {
-      timeScale = 0.02; 
+      timeScale = 0.01; 
       driftAmp = 0.6;
     }
 
@@ -192,7 +192,7 @@ const ParticleSystem = ({ mood, isPlaying }: { mood: MoodState, isPlaying: boole
     geom.attributes.position.needsUpdate = true;
     geom.attributes.color.needsUpdate = true;
     
-    const rotSpeedY = isRelaxed ? 0.0005 : 0.001 + (currentMood.energy * 0.005);
+    const rotSpeedY = isRelaxed ? 0.0005 : 0.0005 + (currentMood.energy * 0.002);
     meshRef.current.rotation.y += rotSpeedY; 
   });
 
@@ -377,9 +377,9 @@ const SceneContent: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
   if (isMobile) {
     // Mobile: Sidebar is at bottom. 
     // Move Visual UP (positive Y) to be visible in the top half.
-    // Adjusted to 1.0 to be slightly lower than 1.5
+    // Lowered from 1.0 to 0.2 to be centered in the viewable area above the panel
     groupScale = 0.6; 
-    groupPos = [0, 1.0, 0]; 
+    groupPos = [0, 0.2, 0]; 
   } else {
     // Desktop: Sidebar right. Center.
     groupPos = [0, 0, 0];
