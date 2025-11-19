@@ -1,15 +1,18 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { MoodState, PlaylistResponse, SpotifyState } from '../types';
 import { generatePlaylist } from '../services/geminiService';
-import { getUserProfile, searchTrack, createPlaylist, addTracksToPlaylist } from '../services/spotifyService';
+import { audioManager } from '../services/audioService';
 
 interface SidebarProps {
-  currentMood: MoodState; // Read-only mood from App (Spotify/Demo)
+  currentMood: MoodState;
   spotifyState: SpotifyState;
   onConnectSpotify: () => void;
   onToggleDemo: () => void;
   isDemoMode: boolean;
   token: string | null;
+  onAudioToggle: (isActive: boolean) => void;
+  isAudioActive: boolean;
 }
 
 type PresetMood = {
@@ -37,29 +40,30 @@ const MOOD_PRESETS: PresetMood[] = [
 ];
 
 const PARAM_CONFIG = [
-  { label: 'Energy', key: 'energy', color: 'text-orange-400', bg: 'bg-orange-400' },
-  { label: 'Lift', key: 'euphoria', color: 'text-pink-400', bg: 'bg-pink-400' },
-  { label: 'Mood Tone', key: 'valence', color: 'text-cyan-400', bg: 'bg-cyan-400' },
-  { label: 'Focus Level', key: 'cognition', color: 'text-white', bg: 'bg-white' },
+  { label: 'ENERGY', key: 'energy', color: 'text-orange-400', bg: 'bg-orange-400' },
+  { label: 'LIFT', key: 'euphoria', color: 'text-pink-400', bg: 'bg-pink-400' },
+  { label: 'MOOD TONE', key: 'valence', color: 'text-cyan-400', bg: 'bg-cyan-400' },
+  { label: 'FOCUS LEVEL', key: 'cognition', color: 'text-gray-300', bg: 'bg-gray-300' },
 ] as const;
 
-const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectSpotify, onToggleDemo, isDemoMode, token }) => {
-  // Local state for Custom Setup (independent of Visualizer)
+const Sidebar: React.FC<SidebarProps> = ({ 
+  currentMood, 
+  spotifyState, 
+  onConnectSpotify, 
+  onToggleDemo, 
+  isDemoMode, 
+  token,
+  onAudioToggle,
+  isAudioActive
+}) => {
   const [customMood, setCustomMood] = useState<MoodState>({
-    energy: 0.5,
-    valence: 0.5,
-    euphoria: 0.5,
-    cognition: 0.5
+    energy: 0.5, valence: 0.5, euphoria: 0.5, cognition: 0.5
   });
-  
   const [playlist, setPlaylist] = useState<PlaylistResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [userContext, setUserContext] = useState("");
   
-  // Selection & Export State
-  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const [exporting, setExporting] = useState(false);
-  const [exportUrl, setExportUrl] = useState<string | null>(null);
+  const [selectedTracks, setSelectedTracks] = useState<Set<number>>(new Set());
 
   const outputRef = useRef<HTMLDivElement>(null);
 
@@ -71,80 +75,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
 
   const handleGenerateClick = async () => {
     setLoading(true);
-    setExportUrl(null); // Reset export state on new generation
-    // Use customMood for generation, not the visualizer mood
     const result = await generatePlaylist(customMood, userContext);
     setPlaylist(result);
-    // Select all songs by default
-    setSelectedIndices(new Set(result.songs.map((_, i) => i)));
+    setSelectedTracks(new Set(result.songs.map((_, i) => i)));
     setLoading(false);
-  };
-
-  const toggleSelection = (index: number) => {
-    const newSet = new Set(selectedIndices);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    setSelectedIndices(newSet);
-  };
-
-  const toggleSelectAll = () => {
-    if (!playlist) return;
-    if (selectedIndices.size === playlist.songs.length) {
-      setSelectedIndices(new Set());
-    } else {
-      setSelectedIndices(new Set(playlist.songs.map((_, i) => i)));
-    }
-  };
-
-  const handleExportToSpotify = async () => {
-    if (!token || !playlist) return;
-    
-    // Filter songs based on selection
-    const selectedSongs = playlist.songs.filter((_, index) => selectedIndices.has(index));
-    
-    if (selectedSongs.length === 0) {
-      alert("Please select at least one song to export.");
-      return;
-    }
-
-    setExporting(true);
-
-    try {
-      // 1. Get User ID
-      const user = await getUserProfile(token);
-      if (!user || !user.id) throw new Error("Could not fetch user profile");
-
-      // 2. Create Playlist
-      // Use a generic name if preset isn't matched exactly, or just "Mood Check"
-      const playlistName = `Mood Check: ${playlist.moodDescription.substring(0, 20)}...`;
-      const newPlaylist = await createPlaylist(token, user.id, playlistName, `AI Generated for mood: ${playlist.moodDescription}`);
-      
-      // 3. Find Tracks
-      const trackUris: string[] = [];
-      for (const song of selectedSongs) {
-        const uri = await searchTrack(token, `${song.title} ${song.artist}`);
-        if (uri) {
-          trackUris.push(uri);
-        }
-      }
-
-      // 4. Add Tracks
-      if (trackUris.length > 0) {
-        await addTracksToPlaylist(token, newPlaylist.id, trackUris);
-        setExportUrl(newPlaylist.external_urls.spotify);
-      } else {
-        alert("Could not find these songs on Spotify.");
-      }
-
-    } catch (error) {
-      console.error("Export failed:", error);
-      alert("Failed to create playlist. Check console for details.");
-    } finally {
-      setExporting(false);
-    }
   };
 
   const handleSliderChange = (key: keyof MoodState, value: string) => {
@@ -155,276 +89,325 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
     setCustomMood(preset.values);
   };
 
-  const getVisualizerTitle = () => {
-    if (currentMood.euphoria > 0.8) return "STATE: LIFTED";
-    if (currentMood.valence < 0.3 && currentMood.energy < 0.3) return "STATE: MELANCHOLIC";
-    if (currentMood.energy > 0.8) return "STATE: HIGH_ENERGY";
-    if (currentMood.cognition > 0.8) return "STATE: DEEP_FOCUS";
-    return "STATE: NOMINAL";
+  const handleAudioToggleClick = async () => {
+    if (isAudioActive) {
+      audioManager.stop();
+      onAudioToggle(false);
+    } else {
+      const success = await audioManager.start();
+      if (success) onAudioToggle(true);
+    }
   };
 
-  // Component for Read-Only Progress Bar
-  const ProgressBar = ({ label, value, color, bg }: { label: string, value: number, color: string, bg: string }) => (
-    <div className="mb-3 group">
-       <div className="flex justify-between text-[10px] mb-1 uppercase tracking-widest">
-          <span className={`${color}`}>{label}</span>
-          <span className="text-white/60 font-mono">{(value * 100).toFixed(0)}%</span>
-       </div>
-       <div className="w-full h-3 bg-white/5 border border-white/20 relative">
-          {/* Grid background for empty part */}
-          <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'linear-gradient(90deg, transparent 50%, rgba(255,255,255,0.5) 50%)', backgroundSize: '4px 100%' }}></div>
-          
-          {/* Filled part */}
-          <div 
-            className={`h-full ${bg} relative transition-all duration-500 ease-out`}
-            style={{ width: `${value * 100}%` }}
-          >
-             {/* Scanline effect on bar */}
-             <div className="absolute inset-0 bg-black/20" style={{ backgroundImage: 'linear-gradient(45deg,transparent 25%,rgba(0,0,0,.5) 25%,rgba(0,0,0,.5) 50%,transparent 50%,transparent 75%,rgba(0,0,0,.5) 75%,rgba(0,0,0,.5))', backgroundSize: '3px 3px' }}></div>
-          </div>
-       </div>
-    </div>
-  );
+  const toggleTrackSelection = (idx: number) => {
+    const next = new Set(selectedTracks);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    setSelectedTracks(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (!playlist) return;
+    if (selectedTracks.size === playlist.songs.length) {
+      setSelectedTracks(new Set());
+    } else {
+      setSelectedTracks(new Set(playlist.songs.map((_, i) => i)));
+    }
+  };
+
+  // LOGIC: Telemetry Display
+  // If a track is loaded, we show its data (even if paused).
+  // If features are missing (local files), we show NO_DATA.
+  // If no track is loaded, we show MANUAL (custom sliders).
+  
+  const hasTrack = !!spotifyState.currentTrack;
+  const hasFeatures = !!spotifyState.features;
+  
+  let telemetryState = "MANUAL";
+  let telemetryColor = "text-white/40";
+  let displayMood = customMood;
+
+  if (hasTrack) {
+      if (hasFeatures) {
+          if (spotifyState.features?.isEstimated) {
+             telemetryState = "ESTIMATED";
+             telemetryColor = "text-amber-500 animate-pulse";
+          } else {
+             telemetryState = "NOMINAL";
+             telemetryColor = "text-green-400";
+          }
+
+          displayMood = {
+            energy: spotifyState.features!.energy,
+            valence: spotifyState.features!.valence,
+            euphoria: spotifyState.features!.danceability,
+            cognition: 1.0 - spotifyState.features!.acousticness
+          };
+      } else {
+          telemetryState = "NO_DATA";
+          telemetryColor = "text-red-500";
+          // Show empty bars for NO_DATA to distinguish from actual 0%
+          displayMood = { energy: 0, valence: 0, euphoria: 0, cognition: 0 };
+      }
+  }
+
+  // Styles for the retro bar patterns
+  const backgroundStripeStyle = {
+    backgroundImage: 'repeating-linear-gradient(90deg, #222 0px, #222 1px, transparent 1px, transparent 4px)'
+  };
+  
+  const fillHatchStyle = {
+    backgroundImage: 'repeating-linear-gradient(45deg, rgba(0,0,0,0.5) 0px, rgba(0,0,0,0.5) 2px, transparent 2px, transparent 4px)'
+  };
+
+  const formatPercent = (val: number) => {
+    if (telemetryState === "NO_DATA") return "N/A";
+    return `${(val * 100).toFixed(0)}%`;
+  };
 
   return (
-    <aside className="w-full md:w-96 h-full bg-black/90 backdrop-blur-sm border-l border-white/20 overflow-y-auto custom-scrollbar font-mono flex flex-col">
-      <div className="p-6 space-y-8 pb-20">
+    <aside className="w-full md:w-96 h-full bg-black/95 backdrop-blur-sm border-l border-white/20 overflow-y-auto custom-scrollbar font-mono flex flex-col">
+      <div className="p-6 space-y-6 pb-20">
         
-        {/* Header Section */}
-        <div className="relative">
-           <div className="absolute top-0 right-0 text-[10px] text-white/30 flex flex-col items-end">
+        <div className="relative mb-6 border-b border-white/20 pb-4">
+           <div className="absolute top-0 right-0 text-[9px] text-white/30 flex flex-col items-end font-mono">
             <span>VER 2.4.0</span>
             <span>SYS.ONLINE</span>
           </div>
-          <h1 className="text-3xl uppercase tracking-tighter text-white mb-1 mt-2">
-            Mood<span className="text-blue-400">_</span>Check<span className="animate-pulse">_</span>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-1 mt-1 uppercase font-pixel">
+            Mood<span className="text-blue-400">_</span>Check<span className="animate-pulse text-blue-400">_</span>
           </h1>
-          <p className="text-white/40 text-xs uppercase tracking-widest border-b border-white/10 pb-4 inline-block">
-            // Visual_Interface_Unit
+          <p className="text-white/40 text-[10px] uppercase tracking-[0.2em] font-mono">
+            // VISUAL_INTERFACE_UNIT
           </p>
         </div>
 
-        {/* Connection Panel (Simplified) */}
-        <div className="p-4 bg-white/5 border border-white/20 relative group">
-           <div className="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/50"></div>
-           <div className="absolute top-0 right-0 w-2 h-2 border-t border-r border-white/50"></div>
-           <div className="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-white/50"></div>
-           <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/50"></div>
-
-          {!spotifyState.isConnected ? (
-            <div className="space-y-3">
-              <button 
-                onClick={onConnectSpotify}
-                className="w-full py-2 px-4 bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold uppercase text-sm tracking-wider transition-none border border-[#1DB954] hover:border-white"
-              >
-                [ Connect_Spotify ]
-              </button>
-              <button 
-                onClick={onToggleDemo}
-                className="w-full py-1 text-xs text-white/40 hover:text-white uppercase tracking-widest hover:bg-white/10 transition-colors"
-              >
-                &gt; Initiate_Simulation
-              </button>
-            </div>
-          ) : (
-             <div className="flex items-center justify-between">
-               <span className="text-green-400 text-xs uppercase tracking-widest blink">&gt;&gt; LINK_ESTABLISHED</span>
-               {isDemoMode && (
-                  <button onClick={onToggleDemo} className="text-[10px] bg-red-500/10 text-red-400 px-2 py-1 border border-red-500/50 hover:bg-red-500 hover:text-black uppercase">
-                    [ STOP_SIM ]
-                  </button>
-               )}
-             </div>
-          )}
-        </div>
-
-        {/* SECTION 1: LIVE PARAMETERS (READ ONLY) */}
-        <div className="space-y-4">
-          <div className="flex justify-between items-center border-b border-white/20 pb-1 border-dashed">
-            <span className="text-sm font-bold text-white uppercase">/// Live_Telemetry</span>
-            <span className="text-[10px] text-white/40 font-mono">{getVisualizerTitle()}</span>
+        {/* REAL-TIME MIC SYNC CARD */}
+        <div className="p-4 border border-white/10 bg-white/5 flex items-center justify-between">
+          <div>
+            <h3 className="text-white font-bold text-xs uppercase tracking-wider">Real-time Mic Sync</h3>
+            <p className="text-[9px] text-white/40 uppercase tracking-wide mt-1">Use microphone for beat pulse</p>
           </div>
-          
-          {/* This uses 'currentMood' passed from App/Spotify */}
-          <div className="space-y-1">
-            {PARAM_CONFIG.map((param) => (
-              <ProgressBar 
-                key={param.key}
-                label={param.label}
-                value={currentMood[param.key as keyof MoodState]}
-                color={param.color}
-                bg={param.bg}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* SECTION 2 & 3: CUSTOM SETUP & PRESETS (EDITABLE) */}
-        <div className="space-y-4 pt-4 border-t border-white/20">
-          <div className="flex justify-between items-center border-b border-white/20 pb-1 border-dashed">
-            <span className="text-sm font-bold text-white uppercase">/// Custom_Setup</span>
-            <span className="text-[10px] text-white/40 font-mono">GENERATOR_CONFIG</span>
-          </div>
-
-          {/* Presets */}
-           <div className="grid grid-cols-2 gap-2 mb-4">
-            {MOOD_PRESETS.map((preset) => (
-              <button
-                key={preset.name}
-                onClick={() => applyPreset(preset)}
-                className="text-[10px] uppercase py-2 px-2 border border-white/20 hover:border-white/60 hover:bg-white/10 text-white/70 hover:text-white transition-all text-left flex items-center gap-2"
-              >
-                <span className="w-1.5 h-1.5 bg-white/40"></span>
-                {preset.name}
-              </button>
-            ))}
-          </div>
-
-          {/* Sliders - These control 'customMood' */}
-          <div className="space-y-4">
-            {PARAM_CONFIG.map((control) => (
-              <div key={control.key} className="group">
-                <div className="flex justify-between text-[10px] mb-1 uppercase tracking-widest">
-                  <span className={`text-white/60 group-hover:text-white transition-colors`}>{control.label}</span>
-                  <span className="text-white/30 font-mono">{(customMood[control.key as keyof MoodState] * 100).toFixed(0)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={customMood[control.key as keyof MoodState]}
-                  onChange={(e) => handleSliderChange(control.key as keyof MoodState, e.target.value)}
-                  className="w-full"
-                />
-              </div>
-            ))}
-          </div>
-          
-          {/* Context Input */}
-           <div className="space-y-2 pt-2">
-             <input 
-                type="text"
-                placeholder=">> ADD_CONTEXT (OPTIONAL)..."
-                value={userContext}
-                onChange={(e) => setUserContext(e.target.value)}
-                className="w-full bg-black border border-white/30 px-3 py-2 text-xs text-white placeholder-white/20 focus:outline-none focus:border-blue-400 font-mono uppercase"
-             />
-          </div>
-
-          {/* Generate Button */}
           <button 
-            onClick={handleGenerateClick}
-            disabled={loading}
-            className={`w-full py-3 font-bold text-sm uppercase tracking-widest transition-all border
-              ${loading 
-                ? 'bg-white/5 border-white/10 text-white/20 cursor-wait' 
-                : 'bg-white/5 border-white/40 hover:bg-white hover:text-black hover:border-white shadow-[4px_4px_0px_0px_rgba(255,255,255,0.1)] hover:shadow-none active:translate-x-[2px] active:translate-y-[2px]'
-              }`}
+            onClick={handleAudioToggleClick}
+            className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border transition-all
+              ${isAudioActive 
+                ? 'bg-red-500/20 text-red-400 border-red-500 hover:bg-red-500 hover:text-white' 
+                : 'bg-transparent text-white/40 border-white/20 hover:text-white hover:border-white'}`}
           >
-            {loading ? (
-              <span className="animate-pulse">processing...</span>
-            ) : "[ GENERATE_SEQUENCE ]"}
+            {isAudioActive ? "ON" : "OFF"}
           </button>
         </div>
 
-        {/* SECTION 4: OUTPUT LOG */}
-        <div ref={outputRef} className="space-y-4 pt-4 border-t border-white/20">
-           <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-bold text-white uppercase">/// Output_Log</span>
-            {playlist && (
-              <button 
-                onClick={toggleSelectAll}
-                className="text-[9px] uppercase text-white/50 hover:text-white hover:underline font-mono"
-              >
-                {selectedIndices.size === playlist.songs.length ? "[ Unselect All ]" : "[ Select All ]"}
-              </button>
-            )}
+        {/* CONNECT BUTTON */}
+        {!spotifyState.isConnected ? (
+          <div className="p-4 border border-dashed border-white/20 bg-white/5 text-center">
+             <p className="text-xs text-white/50 mb-3 uppercase tracking-widest">System Offline</p>
+             <button 
+                onClick={onConnectSpotify}
+                className="w-full py-3 bg-[#1DB954]/90 hover:bg-[#1DB954] text-black font-bold text-xs uppercase tracking-[0.15em] transition-all hover:scale-[1.02]"
+             >
+                &gt;&gt; Connect Spotify
+             </button>
+          </div>
+        ) : (
+          <div className="p-3 border border-green-500/30 bg-green-500/5 flex items-center justify-between">
+             <span className="text-[10px] text-green-400 uppercase tracking-widest font-bold">&gt;&gt; LINK_ESTABLISHED</span>
+             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.8)]"></div>
+          </div>
+        )}
+
+        {/* TELEMETRY DASHBOARD */}
+        <div className="space-y-4">
+            <div className="flex justify-between items-end border-b border-dashed border-white/20 pb-1">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide font-pixel">/// LIVE_TELEMETRY</h3>
+              <span className={`text-[9px] font-mono ${telemetryColor}`}>STATE: {telemetryState}</span>
+            </div>
+
+            <div className="space-y-5 pt-1">
+               {/* ENERGY */}
+               <div className="group">
+                  <div className="flex justify-between text-[10px] mb-1.5 uppercase tracking-widest font-bold">
+                    <span className="text-orange-500">ENERGY</span>
+                    <span className="text-white font-mono">{formatPercent(displayMood.energy)}</span>
+                  </div>
+                  <div className="h-3 w-full bg-black border border-white/10 relative overflow-hidden">
+                      {/* Background Texture */}
+                      <div className="absolute inset-0 opacity-30" style={backgroundStripeStyle}></div>
+                      {/* Filled Bar */}
+                      <div className="absolute top-0 left-0 bottom-0 bg-orange-500 transition-all duration-500 ease-out" style={{ width: `${displayMood.energy * 100}%` }}>
+                          <div className="absolute inset-0 w-full h-full" style={fillHatchStyle}></div>
+                      </div>
+                  </div>
+               </div>
+
+               {/* LIFT */}
+               <div className="group">
+                  <div className="flex justify-between text-[10px] mb-1.5 uppercase tracking-widest font-bold">
+                    <span className="text-pink-500">LIFT</span>
+                    <span className="text-white font-mono">{formatPercent(displayMood.euphoria)}</span>
+                  </div>
+                  <div className="h-3 w-full bg-black border border-white/10 relative overflow-hidden">
+                      <div className="absolute inset-0 opacity-30" style={backgroundStripeStyle}></div>
+                      <div className="absolute top-0 left-0 bottom-0 bg-pink-500 transition-all duration-500 ease-out" style={{ width: `${displayMood.euphoria * 100}%` }}>
+                          <div className="absolute inset-0 w-full h-full" style={fillHatchStyle}></div>
+                      </div>
+                  </div>
+               </div>
+
+               {/* MOOD TONE */}
+               <div className="group">
+                  <div className="flex justify-between text-[10px] mb-1.5 uppercase tracking-widest font-bold">
+                    <span className="text-cyan-500">MOOD TONE</span>
+                    <span className="text-white font-mono">{formatPercent(displayMood.valence)}</span>
+                  </div>
+                  <div className="h-3 w-full bg-black border border-white/10 relative overflow-hidden">
+                      <div className="absolute inset-0 opacity-30" style={backgroundStripeStyle}></div>
+                      <div className="absolute top-0 left-0 bottom-0 bg-cyan-500 transition-all duration-500 ease-out" style={{ width: `${displayMood.valence * 100}%` }}>
+                          <div className="absolute inset-0 w-full h-full" style={fillHatchStyle}></div>
+                      </div>
+                  </div>
+               </div>
+
+               {/* FOCUS LEVEL */}
+               <div className="group">
+                  <div className="flex justify-between text-[10px] mb-1.5 uppercase tracking-widest font-bold">
+                    <span className="text-white">FOCUS LEVEL</span>
+                    <span className="text-white font-mono">{formatPercent(displayMood.cognition)}</span>
+                  </div>
+                  <div className="h-3 w-full bg-black border border-white/10 relative overflow-hidden">
+                      <div className="absolute inset-0 opacity-30" style={backgroundStripeStyle}></div>
+                      <div className="absolute top-0 left-0 bottom-0 bg-gray-300 transition-all duration-500 ease-out" style={{ width: `${displayMood.cognition * 100}%` }}>
+                          <div className="absolute inset-0 w-full h-full" style={fillHatchStyle}></div>
+                      </div>
+                  </div>
+               </div>
+            </div>
+        </div>
+
+        {/* GENERATOR CONTROLS */}
+        <div className="space-y-4 pt-6">
+            <div className="flex justify-between items-center border-b border-dashed border-white/20 pb-1">
+              <h3 className="text-sm font-bold text-white uppercase font-pixel">/// CUSTOM_SETUP</h3>
+              <span className="text-[9px] text-white/30 font-mono uppercase">GENERATOR_CONFIG</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {MOOD_PRESETS.map((preset) => (
+                <button
+                  key={preset.name}
+                  onClick={() => applyPreset(preset)}
+                  className="text-[9px] font-mono flex items-center gap-2 uppercase py-2 px-2 border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/30 text-white/70 hover:text-white transition-all text-left group"
+                >
+                  <span className="w-1.5 h-1.5 bg-white/20 group-hover:bg-white transition-colors"></span>
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+            
+            {/* Manual Sliders */}
+            <div className="space-y-5">
+               {PARAM_CONFIG.map((control) => (
+                 <div key={control.key} className="group">
+                    <div className="flex justify-between text-[10px] mb-2 uppercase tracking-widest font-bold text-white/80">
+                       <span className="text-white/60 group-hover:text-white transition-colors">{control.label}</span>
+                       <span className="font-mono">{(customMood[control.key as keyof MoodState] * 100).toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={customMood[control.key as keyof MoodState]}
+                      onChange={(e) => handleSliderChange(control.key as keyof MoodState, e.target.value)}
+                      className="w-full opacity-70 hover:opacity-100 transition-opacity"
+                    />
+                 </div>
+               ))}
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <input 
+                  type="text"
+                  placeholder=">> ADD_CONTEXT (OPTIONAL)..."
+                  value={userContext}
+                  onChange={(e) => setUserContext(e.target.value)}
+                  className="w-full bg-black border border-white/20 px-3 py-3 text-[10px] text-white placeholder-white/30 focus:outline-none focus:border-blue-400 font-mono uppercase tracking-wide"
+              />
+            </div>
+
+            <button 
+              onClick={handleGenerateClick}
+              disabled={loading}
+              className={`w-full py-3 font-bold text-xs uppercase tracking-[0.15em] transition-all border font-mono mt-2
+                ${loading 
+                  ? 'bg-white/5 border-white/10 text-white/20 cursor-wait' 
+                  : 'bg-white/5 border-white/30 hover:bg-white hover:text-black hover:border-white shadow-[0_0_10px_rgba(255,255,255,0.05)]'
+                }`}
+            >
+              {loading ? <span className="animate-pulse">PROCESSING...</span> : "[ GENERATE_SEQUENCE ]"}
+            </button>
+        </div>
+
+        {/* PLAYLIST OUTPUT HEADER & CONTENT */}
+        <div className="space-y-4 pt-2">
+          {/* Output Header */}
+          <div className="flex justify-between items-center border-b border-dashed border-white/20 pb-1">
+              <h3 className="text-sm font-bold text-white uppercase font-pixel">/// OUTPUT_LOG</h3>
           </div>
 
-          {playlist ? (
-            <div className="space-y-4">
-              <div className="flex items-start gap-2 border-l-2 border-blue-500 pl-3 py-1 bg-blue-500/5">
-                 <p className="text-xs text-blue-300 leading-relaxed font-mono uppercase">
-                  // AI_ANALYSIS: "{playlist.moodDescription}"
+          {/* Playlist Content */}
+          <div ref={outputRef}>
+          {playlist && (
+            <div className="space-y-3 animate-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-start gap-2 border-l border-blue-500 pl-3 py-1 bg-blue-500/5">
+                 <p className="text-[10px] text-blue-300 leading-relaxed font-mono uppercase">
+                  // AI_OUT: "{playlist.moodDescription}"
                  </p>
               </div>
               
-              <div className="space-y-3">
-                {playlist.songs.map((song, idx) => {
-                  const isSelected = selectedIndices.has(idx);
-                  return (
-                    <div 
-                      key={idx} 
-                      onClick={() => toggleSelection(idx)}
-                      className={`group p-3 border cursor-pointer transition-all relative overflow-hidden
-                        ${isSelected 
-                          ? 'border-white/30 bg-white/10 opacity-100' 
-                          : 'border-white/5 bg-black opacity-50 hover:opacity-80 hover:border-white/20'
-                        }`}
-                    >
-                      {/* Checkbox Aesthetic */}
-                      <div className="flex items-start gap-3">
-                        <div className={`w-4 h-4 border border-white/40 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5 ${isSelected ? 'bg-white text-black font-bold' : 'bg-transparent text-transparent'}`}>
-                          X
-                        </div>
-                        <div className="flex-1 min-w-0">
-                           <div className="flex items-center justify-between mb-1">
-                            <span className={`font-bold text-sm uppercase tracking-tight truncate ${isSelected ? 'text-white' : 'text-white/70'}`}>{song.title}</span>
-                          </div>
-                          <div className="text-xs text-gray-400 mb-2 uppercase border-b border-white/5 pb-1 inline-block">{song.artist}</div>
-                          <div className="text-[10px] text-white/50 leading-relaxed font-mono">&gt;&gt; {song.reason}</div>
-                        </div>
-                      </div>
-                      
-                      {isSelected && (
-                        <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <div className="w-2 h-2 bg-white"></div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+              <div className="flex justify-between items-center pb-2 border-b border-white/10 mt-3">
+                 <div className="flex gap-2">
+                    <button onClick={toggleSelectAll} className="text-[9px] text-white/50 hover:text-white uppercase border border-white/20 px-2 py-0.5 hover:bg-white/10 transition-colors">
+                       {selectedTracks.size === playlist.songs.length ? "NONE" : "ALL"}
+                    </button>
+                 </div>
+                 <span className="text-[9px] text-white/30 font-mono">{selectedTracks.size}/{playlist.songs.length} SELECTED</span>
               </div>
 
-              {/* Export to Spotify Button */}
-              {!exportUrl ? (
-                <button
-                  onClick={handleExportToSpotify}
-                  disabled={exporting || !token || selectedIndices.size === 0}
-                  className={`w-full py-2 font-bold text-xs uppercase tracking-wider border transition-all
-                    ${!token || selectedIndices.size === 0
-                      ? 'opacity-50 border-white/10 text-white/30 cursor-not-allowed'
-                      : exporting 
-                        ? 'bg-green-500/20 border-green-500/50 text-green-400'
-                        : 'bg-green-600 hover:bg-green-500 border-transparent text-white hover:shadow-[0px_0px_15px_rgba(34,197,94,0.4)]'
-                    }`}
-                >
-                   {!token 
-                    ? "[ CONNECT_SPOTIFY_FIRST ]" 
-                    : selectedIndices.size === 0 
-                      ? "[ SELECT_TRACKS ]"
-                      : exporting 
-                        ? ">> SYNCHRONIZING..." 
-                        : `[ EXPORT_TO_SPOTIFY (${selectedIndices.size}) ]`}
-                </button>
-              ) : (
-                 <a 
-                   href={exportUrl} 
-                   target="_blank" 
-                   rel="noreferrer"
-                   className="block w-full text-center py-2 font-bold text-xs uppercase tracking-wider bg-white text-black hover:bg-gray-200 transition-all border border-white"
-                 >
-                   &gt;&gt; OPEN_IN_SPOTIFY
-                 </a>
-              )}
-
-            </div>
-          ) : (
-            <div className="py-8 border border-dashed border-white/10 flex flex-col items-center justify-center text-white/20">
-               <span className="text-[10px] text-center px-4 uppercase tracking-widest font-mono">Awaiting_Generation_Protocol...</span>
+              {playlist.songs.map((song, idx) => {
+                const isSelected = selectedTracks.has(idx);
+                return (
+                  <div 
+                    key={idx} 
+                    className={`p-2 border transition-all cursor-pointer group ${isSelected ? 'border-white/20 bg-white/5' : 'border-transparent opacity-50 hover:opacity-80'}`}
+                    onClick={() => toggleTrackSelection(idx)}
+                  >
+                    <div className="flex items-center gap-3">
+                       <div className={`w-2.5 h-2.5 border border-white/40 flex items-center justify-center ${isSelected ? 'bg-blue-500 border-blue-500' : ''}`}>
+                          {isSelected && <div className="w-1 h-1 bg-white"></div>}
+                       </div>
+                       <div className="flex-1 min-w-0 font-mono">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className={`font-bold text-[10px] uppercase truncate ${isSelected ? 'text-white' : 'text-gray-400'}`}>{song.title}</span>
+                          </div>
+                          <div className="text-[9px] text-gray-500 uppercase truncate">{song.artist}</div>
+                       </div>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              <button 
+                 className="w-full py-2 mt-2 bg-[#1DB954] text-black font-bold text-xs uppercase tracking-[0.15em] hover:bg-[#1ed760] disabled:opacity-50 disabled:cursor-not-allowed font-mono"
+                 disabled={!spotifyState.isConnected || selectedTracks.size === 0}
+                 title={!spotifyState.isConnected ? "Connect Spotify to Export" : ""}
+              >
+                 {spotifyState.isConnected ? `[ EXPORT (${selectedTracks.size}) ]` : "[ LOGIN_REQ ]"}
+              </button>
             </div>
           )}
+          </div>
         </div>
 
       </div>

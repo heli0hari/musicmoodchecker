@@ -1,17 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { MoodState, PlaylistResponse } from "../types";
 
-// Lazy initialization to prevent crash on load if API Key is missing locally
-let ai: GoogleGenAI | null = null;
-
-const getAIClient = () => {
-  if (!ai) {
-    // Fallback to empty string to allow app to load; API calls will fail gracefully later if key is invalid
-    const apiKey = process.env.API_KEY || "";
-    ai = new GoogleGenAI({ apiKey });
-  }
-  return ai;
-}
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generatePlaylist = async (mood: MoodState, userContext?: string): Promise<PlaylistResponse> => {
   const modelId = "gemini-2.5-flash";
@@ -29,8 +19,7 @@ export const generatePlaylist = async (mood: MoodState, userContext?: string): P
   `;
 
   try {
-    const client = getAIClient();
-    const response = await client.models.generateContent({
+    const response = await ai.models.generateContent({
       model: modelId,
       contents: prompt,
       config: {
@@ -63,7 +52,7 @@ export const generatePlaylist = async (mood: MoodState, userContext?: string): P
   } catch (error) {
     console.error("Gemini API Error:", error);
     return {
-      moodDescription: "Unable to connect to AI. Please check your API KEY in the configuration.",
+      moodDescription: "Unable to analyze mood at the moment.",
       songs: []
     };
   }

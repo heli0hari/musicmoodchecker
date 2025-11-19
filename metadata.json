@@ -1,5 +1,7 @@
 {
   "name": "Mood Check - Spotify Visualizer",
   "description": "A real-time 3D music mood visualizer connecting to Spotify API.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }

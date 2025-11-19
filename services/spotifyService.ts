@@ -115,6 +115,9 @@ export const fetchCurrentTrack = async (token: string): Promise<{ track: Spotify
 
     const track = data.item as SpotifyTrack;
     
+    // Local files might have null IDs or IDs that don't work with Audio Features
+    // We still return the track so the UI can show the title, but the calling function checks ID
+    
     return { 
       track, 
       progress_ms: data.progress_ms || 0,

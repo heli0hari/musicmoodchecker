@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { SpotifyState } from '../types';
 import { playTrack, pauseTrack, nextTrack, previousTrack } from '../services/spotifyService';
@@ -7,9 +8,16 @@ interface MediaPlayerProps {
   token: string | null;
   isDemoMode: boolean;
   showProgressBar?: boolean;
+  primaryColor?: string;
 }
 
-const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMode, showProgressBar = false }) => {
+const MediaPlayer: React.FC<MediaPlayerProps> = ({ 
+  spotifyState, 
+  token, 
+  isDemoMode, 
+  showProgressBar = false, 
+  primaryColor = '#1DB954' // Default green if no mood color provided
+}) => {
   const { currentTrack, isPlaying, progress_ms } = spotifyState;
   const [localProgress, setLocalProgress] = useState(progress_ms);
   
@@ -146,14 +154,24 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
            </div>
         </div>
         
-        {/* Conditional Progress Bar (Only shows when requested, typically Mobile Menu View) */}
+        {/* Conditional Progress Bar (Only shows on Mobile) */}
         {showProgressBar && (
-           <div className="absolute bottom-0 left-0 w-full h-1 bg-white/10">
+           <div className="absolute bottom-0 left-0 w-full h-1 bg-white/10 md:hidden">
              <div 
-               className="h-full bg-green-500 transition-all duration-1000 linear relative"
-               style={{ width: `${progressPercent}%` }}
+               className="h-full transition-all duration-1000 linear relative"
+               style={{ 
+                 width: `${progressPercent}%`,
+                 backgroundColor: primaryColor,
+                 boxShadow: `0 0 15px ${primaryColor}`
+               }}
              >
-               <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
+               {/* Glow Bubble Indicator */}
+               <div 
+                 className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full z-50"
+                 style={{ 
+                    boxShadow: `0 0 10px rgba(255,255,255,1), 0 0 20px ${primaryColor}`
+                 }}
+               ></div>
              </div>
            </div>
         )}
