@@ -60,9 +60,10 @@ export class AudioAnalyzer {
   }
 
   getAnalysis() {
-    if (!this.analyser || !this.dataArray) return { bass: 0, mid: 0, treble: 0, raw: [] };
+    if (!this.analyser || !this.dataArray) return { bass: 0, mid: 0, treble: 0, raw: new Uint8Array(0) };
 
-    this.analyser.getByteFrequencyData(this.dataArray);
+    // Cast to any to avoid TypeScript "ArrayBufferLike vs ArrayBuffer" mismatch error
+    this.analyser.getByteFrequencyData(this.dataArray as any);
 
     const bassCount = Math.floor(this.dataArray.length * 0.05); 
     const midCount = Math.floor(this.dataArray.length * 0.25); 
