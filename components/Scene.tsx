@@ -27,29 +27,72 @@ const getParticleTexture = () => {
   return texture;
 };
 
+// --- Types & Interfaces ---
+interface SceneProps {
+  mood: MoodState;
+  tempo: number;
+  isPlaying: boolean;
+}
+
+// --- Shared State Hook for Interpolation ---
+// This helps transition values smoothly between frames instead of snapping
+const useSmoothedState = (
+  targetMood: MoodState, 
+  targetIsPlaying: boolean, 
+  targetTempo: number
+) => {
+  const current = useRef({
+    energy: 0,
+    valence: 0,
+    euphoria: 0,
+    cognition: 0,
+    intensity: 0, // 0 = paused/static, 1 = full playing
+    beatAccumulator: 0, // To track beat position
+    tempo: 0
+  });
+
+  useFrame((state, delta) => {
+    const dampSpeed = 2.0; // Speed of mood transition
+    const playSpeed = 3.0; // Speed of play/pause transition
+
+    // Interpolate Mood
+    current.current.energy = THREE.MathUtils.damp(current.current.energy, targetMood.energy, dampSpeed, delta);
+    current.current.valence = THREE.MathUtils.damp(current.current.valence, targetMood.valence, dampSpeed, delta);
+    current.current.euphoria = THREE.MathUtils.damp(current.current.euphoria, targetMood.euphoria, dampSpeed, delta);
+    current.current.cognition = THREE.MathUtils.damp(current.current.cognition, targetMood.cognition, dampSpeed, delta);
+    
+    // Interpolate Tempo
+    current.current.tempo = THREE.MathUtils.damp(current.current.tempo, targetTempo, dampSpeed, delta);
+
+    // Interpolate Intensity (Play/Pause state)
+    const targetIntensity = targetIsPlaying ? 1.0 : 0.0;
+    current.current.intensity = THREE.MathUtils.damp(current.current.intensity, targetIntensity, playSpeed, delta);
+
+    // Calculate Beat Pulse
+    // We accumulate time scaled by BPM to keep rhythm steady
+    if (current.current.tempo > 0) {
+       // BPM / 60 = Beats per second
+       const beatsPerSecond = current.current.tempo / 60;
+       current.current.beatAccumulator += delta * beatsPerSecond;
+    }
+  });
+
+  return current;
+};
+
 // --- Particle System Component ---
 
-const ParticleSystem = ({ mood, isPlaying, tempo }: { mood: MoodState, isPlaying: boolean, tempo: number }) => {
-  const maxCount = 800; // Increased count for better visibility
+const ParticleSystem = ({ smoothedValues }: { smoothedValues: React.MutableRefObject<any> }) => {
+  const maxCount = 1000; 
   const meshRef = useRef<THREE.Points>(null);
-  
-  // Use a ref to access current mood inside useFrame without dependency issues
-  const moodRef = useRef(mood);
-  useEffect(() => {
-    moodRef.current = mood;
-  }, [mood]);
-
-  // Memoize texture
   const particleTexture = useMemo(() => getParticleTexture(), []);
 
-  // Store initial random values
   const initialData = useMemo(() => {
     const positions = new Float32Array(maxCount * 3);
     const randoms = new Float32Array(maxCount * 3);
-    const sizes = new Float32Array(maxCount);
     
     for (let i = 0; i < maxCount; i++) {
-      const r = 3.5 + Math.random() * 4.5; 
+      const r = 4 + Math.random() * 5; // Initial radius distribution
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       
@@ -60,158 +103,106 @@ const ParticleSystem = ({ mood, isPlaying, tempo }: { mood: MoodState, isPlaying
       randoms[i * 3] = Math.random();
       randoms[i * 3 + 1] = Math.random();
       randoms[i * 3 + 2] = Math.random();
-
-      sizes[i] = Math.random();
     }
-    return { positions, randoms, sizes };
+    return { positions, randoms };
   }, []);
 
-  // Reusable color objects to avoid GC
+  // Reusable colors
   const cEnergy = useMemo(() => new THREE.Color("#ffaa00"), []);
   const cValence = useMemo(() => new THREE.Color("#00d2ff"), []);
   const cEuphoria = useMemo(() => new THREE.Color("#ff4081"), []);
-  const cPeace = useMemo(() => new THREE.Color("#aaddff"), []);
   const targetColor = useMemo(() => new THREE.Color(), []);
 
   useFrame((state) => {
     if (!meshRef.current) return;
     
-    // Access latest mood from ref
-    const currentMood = moodRef.current;
-    
+    const { energy, valence, euphoria, intensity, beatAccumulator } = smoothedValues.current;
     const time = state.clock.getElapsedTime();
+
+    // If intensity is very low (paused), hide particles
+    if (intensity < 0.01) {
+      meshRef.current.visible = false;
+      return;
+    }
+    meshRef.current.visible = true;
+
     const geom = meshRef.current.geometry;
     const positions = geom.attributes.position.array as Float32Array;
     const colors = geom.attributes.color.array as Float32Array;
+
+    // Calculate Color based on smoothed mood
+    targetColor.setRGB(0, 0, 0);
+    targetColor.r += cValence.r * valence + cEnergy.r * energy + cEuphoria.r * euphoria;
+    targetColor.g += cValence.g * valence + cEnergy.g * energy + cEuphoria.g * euphoria;
+    targetColor.b += cValence.b * valence + cEnergy.b * energy + cEuphoria.b * euphoria;
+    // Normalize
+    const maxC = Math.max(targetColor.r, targetColor.g, targetColor.b, 1);
+    targetColor.multiplyScalar(1/maxC);
+
+    // Beat Pulse Logic (Kick Drum simulation)
+    // beatAccumulator goes 0 -> 1 -> 2 etc.
+    // Math.PI * 2 * beatAccumulator gives a sine wave that matches BPM
+    // Pow(sin, 10) makes it a sharp pulse
+    const beatPhase = beatAccumulator % 1;
+    const rawPulse = Math.sin(beatAccumulator * Math.PI * 2);
+    // Sharp kick on the beat
+    const kick = Math.pow(Math.max(0, rawPulse), 10); 
     
-    const isRelaxed = currentMood.energy < 0.4 && currentMood.valence > 0.3;
-    const isHighEnergy = currentMood.energy > 0.7;
-
-    // --- Active Count Logic (Reactivity) ---
-    // Directly link active particles to energy for obvious feedback
-    let activeRatio = 0.3 + (currentMood.energy * 0.7);
-    if (isRelaxed) activeRatio = 0.6; 
-    
-    const activeCount = Math.floor(maxCount * Math.min(1, activeRatio));
-
-    // --- Color Logic (Reactivity) ---
-    if (isRelaxed) {
-        targetColor.copy(cPeace).lerp(cValence, 0.3);
-    } else {
-        // Reset
-        targetColor.setRGB(0,0,0);
-        // Additive mixing based on weights
-        targetColor.r += cValence.r * currentMood.valence;
-        targetColor.g += cValence.g * currentMood.valence;
-        targetColor.b += cValence.b * currentMood.valence;
-
-        targetColor.r += cEnergy.r * currentMood.energy;
-        targetColor.g += cEnergy.g * currentMood.energy;
-        targetColor.b += cEnergy.b * currentMood.energy;
-
-        targetColor.r += cEuphoria.r * currentMood.euphoria;
-        targetColor.g += cEuphoria.g * currentMood.euphoria;
-        targetColor.b += cEuphoria.b * currentMood.euphoria;
-        
-        // Normalize if too bright
-        if (targetColor.r > 1 || targetColor.g > 1 || targetColor.b > 1) {
-             targetColor.multiplyScalar(1/Math.max(targetColor.r, targetColor.g, targetColor.b));
-        }
-    }
-
-    let timeScale = 0.01; 
-    let driftAmp = 0.5;
-
-    if (isRelaxed) {
-      timeScale = 0.002;
-      driftAmp = 1.2;
-    } else if (isHighEnergy) {
-      timeScale = 0.02 + (currentMood.energy * 0.02);
-      driftAmp = 0.4;          
-    } else {
-      timeScale = 0.01; 
-      driftAmp = 0.6;
-    }
-
-    // --- Tempo Sync Logic ---
-    // If we have a valid tempo, calculate frequency in Hz (BPM / 60).
-    // Multiply by PI*2 to get angular frequency for sine wave.
-    let pulseFrequency = 1;
-    if (isPlaying && tempo > 0) {
-      pulseFrequency = (tempo / 60) * Math.PI * 2; 
-    } else if (isPlaying) {
-      // Fallback if no tempo but playing (approx 100bpm)
-      pulseFrequency = (100 / 60) * Math.PI * 2;
-    } else {
-      // Breathing speed when paused
-      pulseFrequency = 1; 
-    }
+    // Expansion factor based on beat
+    const expansion = 1 + (kick * 0.3 * energy);
 
     for (let i = 0; i < maxCount; i++) {
-      const isActive = i < activeCount;
       const ix = i * 3;
+      const rx = initialData.randoms[ix];
+      const ry = initialData.randoms[ix + 1];
+      const rz = initialData.randoms[ix + 2];
+
+      const bx = initialData.positions[ix];
+      const by = initialData.positions[ix + 1];
+      const bz = initialData.positions[ix + 2];
+
+      // Orbiting movement
+      const speed = 0.2 + (energy * 0.5);
+      const t = time * speed + rx * 10;
+
+      // Base Position + Drift
+      let px = bx + Math.sin(t) * 0.5;
+      let py = by + Math.cos(t * 0.8) * 0.5;
+      let pz = bz + Math.sin(t * 1.2) * 0.5;
+
+      // Apply Rhythm Expansion
+      px *= expansion;
+      py *= expansion;
+      pz *= expansion;
+
+      // Apply Intensity (shrink to center when paused)
+      px *= intensity;
+      py *= intensity;
+      pz *= intensity;
+
+      positions[ix] = px;
+      positions[ix + 1] = py;
+      positions[ix + 2] = pz;
+
+      // Alpha / Brightness
+      // Particles fade out when intensity drops
+      const baseAlpha = 0.3 + (euphoria * 0.5);
+      // Flash on kick
+      const beatFlash = kick * energy; 
       
-      if (isActive) {
-        const rx = initialData.randoms[ix];
-        const ry = initialData.randoms[ix + 1];
-        const rz = initialData.randoms[ix + 2];
+      const alpha = (baseAlpha + beatFlash) * intensity;
 
-        const bx = initialData.positions[ix];
-        const by = initialData.positions[ix + 1];
-        const bz = initialData.positions[ix + 2];
-
-        // Movement
-        const dx = Math.sin(time * timeScale * 0.5 + rx * 10) * driftAmp;
-        const dy = Math.cos(time * timeScale * 0.3 + ry * 10) * driftAmp;
-        const dz = Math.sin(time * timeScale * 0.4 + rz * 10) * driftAmp;
-
-        positions[ix] = bx + dx;
-        positions[ix + 1] = by + dy;
-        positions[ix + 2] = bz + dz;
-
-        // Beat Pulse - Synced to BPM
-        // Add phase offset based on particle index/random to create ripples
-        const phase = rx * 10;
-        const pulse = Math.sin((time * pulseFrequency) + phase);
-        
-        // Alpha/Brightness
-        let alpha = 0.6;
-        
-        if (isRelaxed) {
-            alpha = 0.3 + (Math.sin(time * 0.5 + rx * 5) * 0.2); 
-        } else {
-            const minAlpha = 0.4 + (currentMood.energy * 0.3);
-            const sparkle = (currentMood.euphoria > 0.6 && pulse > 0.9) ? 0.8 : 0;
-            // Modulate alpha with beat pulse
-            alpha = minAlpha + (pulse * 0.2 * currentMood.euphoria) + sparkle;
-        }
-
-        alpha = Math.max(0, Math.min(1, alpha));
-
-        // Color Jitter
-        const rVar = (rx - 0.5) * 0.1;
-        const gVar = (ry - 0.5) * 0.1;
-        const bVar = (rz - 0.5) * 0.1;
-
-        colors[ix] = Math.max(0, (targetColor.r + rVar) * alpha);
-        colors[ix + 1] = Math.max(0, (targetColor.g + gVar) * alpha);
-        colors[ix + 2] = Math.max(0, (targetColor.b + bVar) * alpha);
-
-      } else {
-        // Collapse inactive particles to center or hide them
-        positions[ix] = 0; positions[ix+1] = 0; positions[ix+2] = 0;
-        colors[ix] = 0; colors[ix+1] = 0; colors[ix+2] = 0;
-      }
+      colors[ix] = targetColor.r * alpha;
+      colors[ix + 1] = targetColor.g * alpha;
+      colors[ix + 2] = targetColor.b * alpha;
     }
 
     geom.attributes.position.needsUpdate = true;
     geom.attributes.color.needsUpdate = true;
     
-    const rotSpeedY = isRelaxed ? 0.0005 : 0.0005 + (currentMood.energy * 0.002);
-    meshRef.current.rotation.y += rotSpeedY; 
+    // Rotate entire cloud slowly
+    meshRef.current.rotation.y = time * 0.05 * intensity;
   });
-
-  const particleSize = 0.15 + (mood.euphoria * 0.1);
 
   return (
     <points ref={meshRef}>
@@ -232,14 +223,13 @@ const ParticleSystem = ({ mood, isPlaying, tempo }: { mood: MoodState, isPlaying
         />
       </bufferGeometry>
       <pointsMaterial 
-        size={particleSize}
+        size={0.2}
         vertexColors 
         transparent 
         opacity={1} 
         blending={THREE.AdditiveBlending} 
         depthWrite={false}
         map={particleTexture || undefined}
-        sizeAttenuation={true}
       />
     </points>
   );
@@ -247,182 +237,155 @@ const ParticleSystem = ({ mood, isPlaying, tempo }: { mood: MoodState, isPlaying
 
 // --- Main Visualizer Blob ---
 
-const AudioReactiveBlob = ({ mood, tempo, isPlaying }: { mood: MoodState, tempo: number, isPlaying: boolean }) => {
+const AudioReactiveBlob = ({ smoothedValues }: { smoothedValues: React.MutableRefObject<any> }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const noise3D = useMemo(() => createNoise3D(), []);
   
-  const materialType = useMemo(() => {
-    if (mood.cognition > 0.8) return VisualizerMaterial.Glass;
-    if (mood.energy > 0.75 && mood.valence < 0.4) return VisualizerMaterial.Metal;
-    if (mood.energy > 0.5 && mood.valence < 0.5) return VisualizerMaterial.Rock;
-    if (mood.valence > 0.6 && mood.euphoria > 0.5) return VisualizerMaterial.Romance;
-    return VisualizerMaterial.Liquid;
-  }, [mood.cognition, mood.valence, mood.energy, mood.euphoria]);
+  // Determine material type based on dominant mood (calculated from props in parent, but simplified here)
+  // We'll just swap materials based on the smoothed values in the ref during render if needed, 
+  // but swapping materials in useFrame is expensive. 
+  // Better to stick to one versatile material or update properties.
+  // For this implementation, let's use a high-quality dynamic material that adapts.
 
-  const baseColor = useMemo(() => {
-    const c1 = new THREE.Color("#2b2b2b");
-    const c2 = new THREE.Color("#ffb347");
-    const c3 = new THREE.Color("#32c9ff");
-    return c1.clone().lerp(c3, mood.valence).lerp(c2, mood.energy * 0.5);
-  }, [mood.energy, mood.valence]);
+  const materialRef = useRef<any>(null);
 
   useFrame((state) => {
     if (!meshRef.current) return;
-    const time = state.clock.getElapsedTime();
     
-    // --- Simulated Beat Logic ---
-    let beatPulse = 0;
-    if (isPlaying && tempo > 0) {
-      const beatDuration = 60 / tempo;
-      // Normalize time to beat cycle (0 to 1)
-      const beatProgress = (time % beatDuration) / beatDuration;
-      
-      if (materialType === VisualizerMaterial.Romance) {
-        // Sharp thump at start of beat
-        beatPulse = (Math.sin(beatProgress * Math.PI * 2) > 0.9 ? 0.2 : 0);
-      } else {
-        // Smooth sine wave pulse
-        beatPulse = Math.pow(Math.sin(beatProgress * Math.PI), 5); 
-      }
-    } else {
-      // Slow breathing when paused
-      beatPulse = (Math.sin(time) * 0.5 + 0.5) * 0.2; 
-    }
+    const { energy, valence, euphoria, cognition, intensity, beatAccumulator } = smoothedValues.current;
+    const time = state.clock.getElapsedTime();
 
-    // Vertex Displacement
+    // --- BEAT SYNTHESIS ---
+    // Create a sharp impulse for the beat
+    const rawSine = Math.sin(beatAccumulator * Math.PI * 2);
+    // 'Kick' is positive only, sharp peak
+    const kick = Math.pow(Math.max(0, rawSine), 8); 
+    // 'Snare' or offbeat noise
+    const fastNoise = noise3D(time * 2, 0, 0);
+
+    // --- DISTORTION LOGIC ---
+    // If intensity is 0 (paused), distortion is 0 -> Perfect Sphere
+    const baseDistortion = intensity * (0.2 + (energy * 0.6)); 
+    const beatDistortion = intensity * (kick * 0.4 * energy); // Extra pop on beat
+
     const geometry = meshRef.current.geometry;
     const positionAttribute = geometry.getAttribute('position');
     const vertex = new THREE.Vector3();
+    const originalPositions = (geometry.attributes.originalPosition as THREE.BufferAttribute)?.array || geometry.attributes.position.array;
     
-    let noiseFreq = 1.2;
-    let noiseAmp = 0.3;
-    
-    if (materialType === VisualizerMaterial.Metal) {
-        noiseFreq = 3.0; noiseAmp = 0.5; 
+    // Store original positions once to prevent sphere from degrading
+    if (!geometry.attributes.originalPosition) {
+      geometry.setAttribute('originalPosition', positionAttribute.clone());
     }
 
+    // Noise parameters
+    // Higher cognition = more complex, high frequency noise (spiky)
+    // Higher valence = smoother, flowing noise
+    const noiseFreq = 1.0 + (cognition * 2.0);
+    const speed = time * (0.5 + (energy * 0.5));
+
     for (let i = 0; i < positionAttribute.count; i++) {
-      vertex.fromBufferAttribute(positionAttribute, i);
-      vertex.normalize();
+      // Read from ORIGINAL perfect sphere position
+      vertex.fromBufferAttribute(geometry.attributes.originalPosition as THREE.BufferAttribute, i);
       
-      const movement = time * (0.2 + mood.energy * 0.6);
-      
-      const noiseVal = noise3D(
-        vertex.x * noiseFreq + movement,
-        vertex.y * noiseFreq + movement,
+      // Calculate Noise
+      const n = noise3D(
+        vertex.x * noiseFreq + speed,
+        vertex.y * noiseFreq + speed,
         vertex.z * noiseFreq
       );
 
-      const distortion = 0.8 + (noiseVal * noiseAmp) + (beatPulse * 0.15);
-      vertex.multiplyScalar(distortion);
+      // Apply Distortion
+      // Combine smooth flow + beat kick
+      const scalar = 1 + (n * baseDistortion) + (kick * n * 0.2);
+      
+      vertex.multiplyScalar(scalar);
       positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
     }
 
     positionAttribute.needsUpdate = true;
     geometry.computeVertexNormals();
 
-    meshRef.current.rotation.y += 0.002 + (mood.energy * 0.01);
+    // --- COLOR & MATERIAL UPDATE ---
+    if (materialRef.current) {
+        const c1 = new THREE.Color("#2b2b2b"); // Dark base
+        const c2 = new THREE.Color("#ffb347"); // Energy
+        const c3 = new THREE.Color("#32c9ff"); // Valence
+        const c4 = new THREE.Color("#ff4081"); // Euphoria
+
+        const finalColor = c1.clone();
+        finalColor.lerp(c2, energy * intensity);
+        finalColor.lerp(c3, valence * intensity);
+        finalColor.lerp(c4, euphoria * intensity * kick); // Flash on beat
+
+        materialRef.current.color = finalColor;
+        materialRef.current.emissive = finalColor;
+        // Pulse emissive intensity with beat
+        materialRef.current.emissiveIntensity = (0.2 + (euphoria * 0.8) + (kick * 0.5)) * intensity;
+        
+        // Modify roughness/metalness based on mood
+        materialRef.current.roughness = 0.5 - (cognition * 0.4); // Focus makes it sharper/shiny
+        materialRef.current.metalness = 0.3 + (energy * 0.5);
+    }
+    
+    // Rotation
+    meshRef.current.rotation.y += 0.002 + (energy * 0.01 * intensity);
+    meshRef.current.rotation.z = Math.sin(time * 0.2) * 0.1 * intensity;
   });
 
   return (
     <mesh ref={meshRef}>
-      <sphereGeometry args={[1, 128, 128]} />
-      
-      {materialType === VisualizerMaterial.Liquid && (
-        <meshStandardMaterial 
-          color={baseColor}
-          roughness={0.2}
-          metalness={0.8}
-          emissive={baseColor}
-          emissiveIntensity={mood.euphoria * 0.5}
-        />
-      )}
-
-      {materialType === VisualizerMaterial.Rock && (
-        <meshStandardMaterial 
-          color={'#2a2a2a'}
-          roughness={0.9}
-          metalness={0.2}
-          flatShading={true}
-        />
-      )}
-
-      {materialType === VisualizerMaterial.Metal && (
-         <meshStandardMaterial 
-           color={'#ffffff'}
-           roughness={0.15}
-           metalness={1.0}
-           envMapIntensity={2.0}
-         />
-      )}
-
-      {materialType === VisualizerMaterial.Romance && (
-         <meshPhysicalMaterial 
-            color={'#ff4d6d'} 
-            emissive={'#590d22'} 
-            emissiveIntensity={0.5}
-            roughness={0.2}
-            metalness={0.1}
-            clearcoat={1.0} 
-            transmission={0.2} 
-         />
-      )}
-
-      {materialType === VisualizerMaterial.Glass && (
-        <MeshTransmissionMaterial 
-          backside samples={4} thickness={1.5} roughness={0.1}
-          chromaticAberration={0.1} anisotropy={0.3} color={baseColor}
-        />
-      )}
+      <sphereGeometry args={[1.2, 128, 128]} />
+      <meshStandardMaterial 
+        ref={materialRef}
+        color="#ffffff"
+        roughness={0.4}
+        metalness={0.5}
+      />
     </mesh>
   );
 };
 
-interface SceneProps {
-  mood: MoodState;
-  tempo: number;
-  isPlaying: boolean;
-}
-
+// --- Scene Content Wrapper ---
 const SceneContent: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
   const { width } = useThree((state) => state.viewport);
-  
-  // Robust Mobile Check based on viewport width relative to typical mobile sizes
   const isMobile = width < 7; 
+  
+  // Use the smoothing hook
+  const smoothedValues = useSmoothedState(mood, isPlaying, tempo);
 
-  // Responsive Logic
+  // Responsive positioning
   let groupScale = 1.0;
   let groupPos: [number, number, number] = [0, 0, 0];
 
   if (isMobile) {
-    // Mobile: Sidebar is at bottom. 
-    // Move Visual UP (positive Y) to be visible in the top half.
-    // Lowered from 1.0 to 0.2 to be centered in the viewable area above the panel
     groupScale = 0.6; 
-    groupPos = [0, 0.2, 0]; 
+    groupPos = [0, 0.5, 0]; 
   } else {
-    // Desktop: Sidebar right. Center.
     groupPos = [0, 0, 0];
     groupScale = 0.9;
   }
 
   return (
     <group scale={groupScale} position={groupPos}>
-        <AudioReactiveBlob mood={mood} tempo={tempo} isPlaying={isPlaying} />
-        <ParticleSystem mood={mood} isPlaying={isPlaying} tempo={tempo} />
+        <AudioReactiveBlob smoothedValues={smoothedValues} />
+        <ParticleSystem smoothedValues={smoothedValues} />
     </group>
   );
 };
 
 const Scene: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
   return (
-    <Canvas dpr={[1, 2]} camera={{ position: [0, 0, 8], fov: 35 }} gl={{ alpha: true }}>
-      <ambientLight intensity={0.4} />
+    <Canvas dpr={[1, 2]} camera={{ position: [0, 0, 8], fov: 35 }} gl={{ alpha: true, antialias: true }}>
+      <ambientLight intensity={0.2} />
       <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} />
-      <pointLight position={[-10, -10, -10]} intensity={1} color="#32c9ff" />
-      <pointLight position={[0, 5, -5]} intensity={2} color="#ffffff" />
-      <Environment preset="city" />
+      <pointLight position={[-10, -10, -10]} intensity={0.5} color="#32c9ff" />
+      <pointLight position={[0, 5, 5]} intensity={0.8} />
+      
+      <Environment preset="night" />
+      
       <SceneContent mood={mood} tempo={tempo} isPlaying={isPlaying} />
+      
       <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.5} />
     </Canvas>
   );
