@@ -63,7 +63,11 @@ const App: React.FC = () => {
     // Save ID to storage so user doesn't have to enter it again
     localStorage.setItem('spotify_client_id', clientId);
 
-    const redirectUri = window.location.origin;
+    // IMPORTANT: Spotify is strict about Redirect URIs.
+    // We enforce a trailing slash to match standard browser copy-paste behavior.
+    // If the dashboard has '...netlify.app' (no slash) but we send '...netlify.app/' (with slash), it fails.
+    const redirectUri = `${window.location.origin}/`; 
+
     console.log("Redirecting to Spotify with URI:", redirectUri);
     window.location.href = getAuthUrl(clientId, redirectUri);
   };
@@ -182,7 +186,7 @@ const App: React.FC = () => {
       {/* Settings Modal for Client ID */}
       {showSettings && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md">
-          <div className="bg-black p-8 border-2 border-white/20 w-96 shadow-[8px_8px_0px_0px_rgba(255,255,255,0.1)] relative">
+          <div className="bg-black p-8 border-2 border-white/20 w-[30rem] shadow-[8px_8px_0px_0px_rgba(255,255,255,0.1)] relative">
              {/* Decorative corners */}
             <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-white"></div>
             <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-white"></div>
@@ -192,32 +196,44 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-bold mb-6 uppercase tracking-widest border-b border-dashed border-white/30 pb-2">
               CONFIG.SYS
             </h2>
-            <div className="text-xs text-white/60 mb-6 font-mono leading-relaxed space-y-2">
-              <p className="text-red-400">&gt; ERROR: CLIENT_ID NOT DETECTED</p>
-              <p>&gt; PLEASE ENTER SPOTIFY CLIENT ID:</p>
-              <p>&gt; SOURCE: <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">developer.spotify.com</a></p>
-              <div className="p-2 bg-white/5 border border-white/10 mt-2">
-                <p className="text-[10px] uppercase text-white/40">Required Redirect URI:</p>
-                <code className="text-green-400 block mt-1 select-all">{window.location.origin}</code>
+            <div className="text-xs text-white/60 mb-6 font-mono leading-relaxed space-y-4">
+              <div className="space-y-1">
+                <p>&gt; SETUP INSTRUCTIONS:</p>
+                <p>1. Go to <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline hover:text-blue-300">Spotify Developer Dashboard</a></p>
+                <p>2. Create an App and copy the <strong>Client ID</strong>.</p>
+                <p>3. Click "Edit Settings" in Spotify Dashboard.</p>
+              </div>
+              
+              <div className="p-3 bg-white/5 border border-white/10">
+                <p className="text-[10px] uppercase text-red-300 font-bold mb-1">REQUIRED: ADD THIS TO SPOTIFY DASHBOARD:</p>
+                <code className="text-green-400 block select-all text-xs bg-black/50 p-2 border border-white/10">
+                  {`${window.location.origin}/`}
+                </code>
+                <p className="text-[9px] text-white/30 mt-1">*This changes based on where you run the app (Local vs Netlify). Ensure the URL above is in your "Redirect URIs" list.</p>
               </div>
             </div>
-            <input 
-              type="text" 
-              placeholder="ENTER_CLIENT_ID..."
-              className="w-full bg-black border border-white/40 p-3 mb-6 text-white placeholder-white/20 font-mono text-sm focus:outline-none focus:border-white"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            />
-            <div className="flex justify-end gap-4">
+
+            <div className="mb-2">
+                <label className="text-[10px] uppercase text-white/40 block mb-1">Spotify Client ID</label>
+                <input 
+                  type="text" 
+                  placeholder="ENTER_CLIENT_ID..."
+                  className="w-full bg-black border border-white/40 p-3 text-white placeholder-white/20 font-mono text-sm focus:outline-none focus:border-white transition-colors"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                />
+            </div>
+
+            <div className="flex justify-end gap-4 mt-6">
               <button 
                 onClick={() => setShowSettings(false)} 
                 className="px-6 py-2 text-sm text-white/60 hover:text-white uppercase border border-transparent hover:border-white/20"
               >
-                Cancel
+                Close
               </button>
               <button 
                 onClick={handleConnect} 
-                className="px-6 py-2 bg-white text-black text-sm uppercase font-bold border border-white hover:bg-black hover:text-white transition-colors"
+                className="px-6 py-2 bg-white text-black text-sm uppercase font-bold border border-white hover:bg-black hover:text-white transition-colors shadow-[4px_4px_0px_0px_rgba(255,255,255,0.2)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
               >
                 Save & Connect
               </button>
@@ -254,10 +270,13 @@ const App: React.FC = () => {
         />
       </div>
       
-      {/* Mobile Toggle for Sidebar */}
-       <div className="absolute top-4 right-4 z-50 md:hidden">
-         {/* We can add a mobile menu toggle here if needed, but for now we use responsive Scene and desktop sidebar logic */}
-       </div>
+      {/* Manual Config Trigger Button (Bottom Right) */}
+      <button 
+        onClick={() => setShowSettings(true)}
+        className="absolute bottom-2 right-2 z-50 text-[9px] text-white/20 hover:text-white uppercase tracking-widest border border-transparent hover:border-white/20 px-2 py-1 bg-black/50 backdrop-blur-sm transition-all"
+      >
+        [ SYS_CONFIG ]
+      </button>
 
        {/* Sidebar for Mobile (conditionally rendered or styled) */}
        <div className="absolute bottom-0 w-full h-[45vh] md:hidden z-20 bg-black/90 border-t border-white/20 overflow-auto">
