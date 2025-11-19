@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MoodState, PlaylistResponse, SpotifyState } from '../types';
 import { generatePlaylist } from '../services/geminiService';
 import { audioManager } from '../services/audioService';
+import { searchTrack, getUserProfile, createPlaylist, addTracksToPlaylist } from '../services/spotifyService';
 
 interface SidebarProps {
   currentMood: MoodState;
@@ -61,6 +62,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   });
   const [playlist, setPlaylist] = useState<PlaylistResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [userContext, setUserContext] = useState("");
   
   const [selectedTracks, setSelectedTracks] = useState<Set<number>>(new Set());
@@ -115,11 +117,63 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleExportPlaylist = async () => {
+    if (!spotifyState.isConnected || !token || !playlist) return;
+    
+    setExporting(true);
+    
+    try {
+        // 1. Get User Profile
+        const user = await getUserProfile(token);
+        if (!user || !user.id) {
+            alert("Could not authenticate Spotify user.");
+            setExporting(false);
+            return;
+        }
+
+        // 2. Create Playlist
+        const moodName = MOOD_PRESETS.find(p => 
+            Math.abs(p.values.energy - customMood.energy) < 0.05 && 
+            Math.abs(p.values.valence - customMood.valence) < 0.05
+        )?.name || `E:${customMood.energy.toFixed(2)} V:${customMood.valence.toFixed(2)}`;
+
+        const playlistName = `MOOD_CHECK // ${moodName}`;
+        const newPlaylist = await createPlaylist(token, user.id, playlistName, playlist.moodDescription);
+        
+        if (!newPlaylist || !newPlaylist.id) {
+             alert("Failed to create playlist on Spotify.");
+             setExporting(false);
+             return;
+        }
+
+        // 3. Find Tracks
+        const tracksToExport = playlist.songs.filter((_, idx) => selectedTracks.has(idx));
+        const uris: string[] = [];
+        
+        // Process sequentially to avoid rate limits
+        for (const song of tracksToExport) {
+            const query = `${song.title} ${song.artist}`;
+            const uri = await searchTrack(token, query);
+            if (uri) uris.push(uri);
+        }
+
+        // 4. Add to Playlist
+        if (uris.length > 0) {
+            await addTracksToPlaylist(token, newPlaylist.id, uris);
+            alert(`Successfully exported ${uris.length} tracks to Spotify playlist: "${playlistName}"`);
+        } else {
+            alert("Could not find any of the selected tracks on Spotify.");
+        }
+
+    } catch (e) {
+        console.error("Export error:", e);
+        alert("An error occurred while exporting to Spotify.");
+    } finally {
+        setExporting(false);
+    }
+  };
+
   // LOGIC: Telemetry Display
-  // If a track is loaded, we show its data (even if paused).
-  // If features are missing (local files), we show NO_DATA.
-  // If no track is loaded, we show MANUAL (custom sliders).
-  
   const hasTrack = !!spotifyState.currentTrack;
   const hasFeatures = !!spotifyState.features;
   
@@ -146,12 +200,10 @@ const Sidebar: React.FC<SidebarProps> = ({
       } else {
           telemetryState = "NO_DATA";
           telemetryColor = "text-red-500";
-          // Show empty bars for NO_DATA to distinguish from actual 0%
           displayMood = { energy: 0, valence: 0, euphoria: 0, cognition: 0 };
       }
   }
 
-  // Styles for the retro bar patterns
   const backgroundStripeStyle = {
     backgroundImage: 'repeating-linear-gradient(90deg, #222 0px, #222 1px, transparent 1px, transparent 4px)'
   };
@@ -399,11 +451,12 @@ const Sidebar: React.FC<SidebarProps> = ({
               })}
               
               <button 
-                 className="w-full py-2 mt-2 bg-[#1DB954] text-black font-bold text-xs uppercase tracking-[0.15em] hover:bg-[#1ed760] disabled:opacity-50 disabled:cursor-not-allowed font-mono"
-                 disabled={!spotifyState.isConnected || selectedTracks.size === 0}
+                 onClick={handleExportPlaylist}
+                 className="w-full py-2 mt-2 bg-[#1DB954] text-black font-bold text-xs uppercase tracking-[0.15em] hover:bg-[#1ed760] disabled:opacity-50 disabled:cursor-not-allowed font-mono transition-all"
+                 disabled={!spotifyState.isConnected || selectedTracks.size === 0 || exporting}
                  title={!spotifyState.isConnected ? "Connect Spotify to Export" : ""}
               >
-                 {spotifyState.isConnected ? `[ EXPORT (${selectedTracks.size}) ]` : "[ LOGIN_REQ ]"}
+                 {spotifyState.isConnected ? (exporting ? "[ EXPORTING... ]" : `[ EXPORT (${selectedTracks.size}) ]`) : "[ LOGIN_REQ ]"}
               </button>
             </div>
           )}

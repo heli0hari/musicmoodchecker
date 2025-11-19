@@ -282,7 +282,7 @@ const App: React.FC = () => {
           <div className="w-full h-14 flex items-center justify-center flex-shrink-0 cursor-pointer border-b border-white/10 bg-black/40" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
               <div className="flex flex-col items-center gap-1">
                   <div className="w-16 h-1 bg-white/40 rounded-full mb-1"></div>
-                  <span className="text-[10px] uppercase text-white font-bold tracking-widest">{isMobileMenuOpen ? "Swipe Down" : "Swipe Up / Tap"}</span>
+                  <span className="text-[10px] uppercase text-white font-bold tracking-widest">TAP</span>
               </div>
           </div>
           <div className="flex-1 overflow-hidden relative">

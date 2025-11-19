@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
+
+import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { MoodState, PlaylistResponse } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -40,19 +41,28 @@ export const generatePlaylist = async (mood: MoodState, userContext?: string): P
               }
             }
           }
-        }
+        },
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ]
       }
     });
 
-    const text = response.text;
+    let text = response.text;
     if (!text) throw new Error("No response from AI");
+
+    // Cleanup potentially lingering markdown ticks which some models might still output
+    text = text.replace(/^```json\s*/, "").replace(/\s*```$/, "");
     
     return JSON.parse(text) as PlaylistResponse;
 
   } catch (error) {
     console.error("Gemini API Error:", error);
     return {
-      moodDescription: "Unable to analyze mood at the moment.",
+      moodDescription: "Unable to analyze mood at the moment. Please try again.",
       songs: []
     };
   }
