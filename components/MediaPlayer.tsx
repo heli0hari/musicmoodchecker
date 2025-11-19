@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SpotifyState } from '../types';
 import { playTrack, pauseTrack, nextTrack, previousTrack } from '../services/spotifyService';
 
@@ -6,19 +6,23 @@ interface MediaPlayerProps {
   spotifyState: SpotifyState;
   token: string | null;
   isDemoMode: boolean;
+  showProgressBar?: boolean;
 }
 
-const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMode }) => {
+const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMode, showProgressBar = false }) => {
   const { currentTrack, isPlaying, progress_ms } = spotifyState;
   const [localProgress, setLocalProgress] = useState(progress_ms);
   
   // Optimistic UI state
   const [optimisticIsPlaying, setOptimisticIsPlaying] = useState(isPlaying);
+  // Lock to prevent external updates from overwriting optimistic state immediately after interaction
+  const lastInteractionTime = useRef<number>(0);
 
-  // Sync optimistic state with actual state when prop changes, 
-  // but only if we haven't just clicked (optional refinement, but simple sync works well with fast polling)
+  // Sync optimistic state with actual state, but respect user interaction lock (2 seconds)
   useEffect(() => {
-    setOptimisticIsPlaying(isPlaying);
+    if (Date.now() - lastInteractionTime.current > 2000) {
+      setOptimisticIsPlaying(isPlaying);
+    }
   }, [isPlaying]);
 
   // Sync local progress with prop updates
@@ -51,9 +55,10 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
     e.stopPropagation();
     if (!token || isDemoMode) return;
     
-    // Optimistic Update - Immediate visual feedback
+    // Optimistic Update
     const newState = !optimisticIsPlaying;
     setOptimisticIsPlaying(newState);
+    lastInteractionTime.current = Date.now(); // Lock external sync for 2s
 
     if (newState) {
       playTrack(token);
@@ -66,18 +71,21 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
     e.stopPropagation();
     if (!token || isDemoMode) return;
     nextTrack(token);
+    // Reset progress visually for better feel
+    setLocalProgress(0); 
   };
 
   const handlePrev = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!token || isDemoMode) return;
     previousTrack(token);
+    setLocalProgress(0);
   };
 
   if (!currentTrack) return null;
 
-  const progressPercent = (localProgress / currentTrack.duration_ms) * 100;
   const albumArt = currentTrack.album.images[0]?.url;
+  const progressPercent = (localProgress / currentTrack.duration_ms) * 100;
 
   return (
     <div className="absolute top-0 md:top-auto md:bottom-8 left-0 md:left-8 w-full md:w-[26rem] z-40 p-4 md:p-0 pointer-events-none">
@@ -110,14 +118,7 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
             <span className="text-white/60 text-sm md:text-sm truncate uppercase tracking-wider">{currentTrack.artists[0]?.name}</span>
           </div>
 
-          {/* Progress Bar - Thicker for Touch */}
-          <div className="w-full h-3 md:h-2 bg-white/10 rounded-full mt-1 relative overflow-hidden">
-            <div 
-              className="absolute left-0 top-0 h-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)] transition-all duration-1000 linear"
-              style={{ width: `${progressPercent}%` }}
-            ></div>
-          </div>
-          <div className="flex justify-between text-[11px] md:text-[10px] text-white/50 font-mono">
+          <div className="flex justify-between text-[11px] md:text-[10px] text-white/50 font-mono mt-1">
             <span>{formatTime(localProgress)}</span>
             <span>{formatTime(currentTrack.duration_ms)}</span>
           </div>
@@ -144,6 +145,18 @@ const MediaPlayer: React.FC<MediaPlayerProps> = ({ spotifyState, token, isDemoMo
              </button>
            </div>
         </div>
+        
+        {/* Conditional Progress Bar (Only shows when requested, typically Mobile Menu View) */}
+        {showProgressBar && (
+           <div className="absolute bottom-0 left-0 w-full h-1 bg-white/10">
+             <div 
+               className="h-full bg-green-500 transition-all duration-1000 linear relative"
+               style={{ width: `${progressPercent}%` }}
+             >
+               <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
+             </div>
+           </div>
+        )}
 
       </div>
     </div>

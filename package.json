@@ -10,20 +10,17 @@
   },
   "dependencies": {
     "@google/genai": "latest",
-    "@react-three/drei": "^9.105.0",
-    "@react-three/fiber": "^8.16.0",
+    "p5": "^1.9.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "simplex-noise": "^4.0.1",
-    "three": "^0.163.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
+    "@types/p5": "^1.7.6",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
-    "@types/three": "^0.163.0",
     "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^5.2.2",
-    "vite": "^5.2.0"
+    "vite": "^5.4.21"
   }
 }

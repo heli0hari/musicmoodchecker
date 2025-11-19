@@ -1,394 +1,271 @@
-import React, { useRef, useMemo, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, MeshTransmissionMaterial } from '@react-three/drei';
-import * as THREE from 'three';
-import { MoodState, VisualizerMaterial } from '../types';
-import { createNoise3D } from 'simplex-noise';
+import React, { useEffect, useRef } from 'react';
+import p5 from 'p5';
+import { MoodState } from '../types';
 
-// --- Helper: Particle Texture Generation ---
-const getParticleTexture = () => {
-  if (typeof document === 'undefined') return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  
-  const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-  gradient.addColorStop(0, 'rgba(255,255,255,1)');
-  gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)');
-  gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
-  gradient.addColorStop(1, 'rgba(255,255,255,0)');
-  
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, 32, 32);
-  
-  const texture = new THREE.CanvasTexture(canvas);
-  return texture;
-};
-
-// --- Types & Interfaces ---
 interface SceneProps {
   mood: MoodState;
   tempo: number;
   isPlaying: boolean;
+  progressMs: number;
+  durationMs: number;
+  showProgressRing?: boolean;
 }
 
-// --- Shared State Hook for Interpolation ---
-// This helps transition values smoothly between frames instead of snapping
-const useSmoothedState = (
-  targetMood: MoodState, 
-  targetIsPlaying: boolean, 
-  targetTempo: number
-) => {
-  const current = useRef({
-    energy: 0,
-    valence: 0,
-    euphoria: 0,
-    cognition: 0,
-    intensity: 0, // 0 = paused/static, 1 = full playing
-    beatAccumulator: 0, // To track beat position
-    tempo: 0
-  });
+const Scene: React.FC<SceneProps> = ({ mood, tempo, isPlaying, progressMs, durationMs, showProgressRing = true }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const p5InstanceRef = useRef<p5 | null>(null);
+  // We use a ref to hold the latest props so the p5 closure can access them
+  const stateRef = useRef({ mood, tempo, isPlaying, progressMs, durationMs, showProgressRing });
 
-  useFrame((state, delta) => {
-    const dampSpeed = 2.0; // Speed of mood transition
-    const playSpeed = 3.0; // Speed of play/pause transition
+  useEffect(() => {
+    stateRef.current = { mood, tempo, isPlaying, progressMs, durationMs, showProgressRing };
+  }, [mood, tempo, isPlaying, progressMs, durationMs, showProgressRing]);
 
-    // Interpolate Mood
-    current.current.energy = THREE.MathUtils.damp(current.current.energy, targetMood.energy, dampSpeed, delta);
-    current.current.valence = THREE.MathUtils.damp(current.current.valence, targetMood.valence, dampSpeed, delta);
-    current.current.euphoria = THREE.MathUtils.damp(current.current.euphoria, targetMood.euphoria, dampSpeed, delta);
-    current.current.cognition = THREE.MathUtils.damp(current.current.cognition, targetMood.cognition, dampSpeed, delta);
-    
-    // Interpolate Tempo
-    current.current.tempo = THREE.MathUtils.damp(current.current.tempo, targetTempo, dampSpeed, delta);
+  useEffect(() => {
+    if (!containerRef.current) return;
 
-    // Interpolate Intensity (Play/Pause state)
-    const targetIntensity = targetIsPlaying ? 1.0 : 0.0;
-    current.current.intensity = THREE.MathUtils.damp(current.current.intensity, targetIntensity, playSpeed, delta);
-
-    // Calculate Beat Pulse
-    // We accumulate time scaled by BPM to keep rhythm steady
-    if (current.current.tempo > 0) {
-       // BPM / 60 = Beats per second
-       const beatsPerSecond = current.current.tempo / 60;
-       current.current.beatAccumulator += delta * beatsPerSecond;
+    // Cleanup previous instance if it exists to prevent duplicates
+    if (p5InstanceRef.current) {
+      p5InstanceRef.current.remove();
+      p5InstanceRef.current = null;
     }
-  });
 
-  return current;
-};
-
-// --- Particle System Component ---
-
-const ParticleSystem = ({ smoothedValues }: { smoothedValues: React.MutableRefObject<any> }) => {
-  const maxCount = 1000; 
-  const meshRef = useRef<THREE.Points>(null);
-  const particleTexture = useMemo(() => getParticleTexture(), []);
-
-  const initialData = useMemo(() => {
-    const positions = new Float32Array(maxCount * 3);
-    const randoms = new Float32Array(maxCount * 3);
-    
-    for (let i = 0; i < maxCount; i++) {
-      const r = 4 + Math.random() * 5; // Initial radius distribution
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
+    const sketch = (p: p5) => {
+      let particles: { x: number, y: number, speed: number, size: number, alpha: number }[] = [];
+      const numParticles = 50;
       
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
-      
-      randoms[i * 3] = Math.random();
-      randoms[i * 3 + 1] = Math.random();
-      randoms[i * 3 + 2] = Math.random();
-    }
-    return { positions, randoms };
-  }, []);
+      // Smoothing variables
+      let smoothProgressMs = 0;
+      let lastPropProgressMs = 0;
 
-  // Reusable colors
-  const cEnergy = useMemo(() => new THREE.Color("#ffaa00"), []);
-  const cValence = useMemo(() => new THREE.Color("#00d2ff"), []);
-  const cEuphoria = useMemo(() => new THREE.Color("#ff4081"), []);
-  const targetColor = useMemo(() => new THREE.Color(), []);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    
-    const { energy, valence, euphoria, intensity, beatAccumulator } = smoothedValues.current;
-    const time = state.clock.getElapsedTime();
-
-    // If intensity is very low (paused), hide particles
-    if (intensity < 0.01) {
-      meshRef.current.visible = false;
-      return;
-    }
-    meshRef.current.visible = true;
-
-    const geom = meshRef.current.geometry;
-    const positions = geom.attributes.position.array as Float32Array;
-    const colors = geom.attributes.color.array as Float32Array;
-
-    // Calculate Color based on smoothed mood
-    targetColor.setRGB(0, 0, 0);
-    targetColor.r += cValence.r * valence + cEnergy.r * energy + cEuphoria.r * euphoria;
-    targetColor.g += cValence.g * valence + cEnergy.g * energy + cEuphoria.g * euphoria;
-    targetColor.b += cValence.b * valence + cEnergy.b * energy + cEuphoria.b * euphoria;
-    // Normalize
-    const maxC = Math.max(targetColor.r, targetColor.g, targetColor.b, 1);
-    targetColor.multiplyScalar(1/maxC);
-
-    // Beat Pulse Logic (Kick Drum simulation)
-    // beatAccumulator goes 0 -> 1 -> 2 etc.
-    // Math.PI * 2 * beatAccumulator gives a sine wave that matches BPM
-    // Pow(sin, 10) makes it a sharp pulse
-    const beatPhase = beatAccumulator % 1;
-    const rawPulse = Math.sin(beatAccumulator * Math.PI * 2);
-    // Sharp kick on the beat
-    const kick = Math.pow(Math.max(0, rawPulse), 10); 
-    
-    // Expansion factor based on beat
-    const expansion = 1 + (kick * 0.3 * energy);
-
-    for (let i = 0; i < maxCount; i++) {
-      const ix = i * 3;
-      const rx = initialData.randoms[ix];
-      const ry = initialData.randoms[ix + 1];
-      const rz = initialData.randoms[ix + 2];
-
-      const bx = initialData.positions[ix];
-      const by = initialData.positions[ix + 1];
-      const bz = initialData.positions[ix + 2];
-
-      // Orbiting movement
-      const speed = 0.2 + (energy * 0.5);
-      const t = time * speed + rx * 10;
-
-      // Base Position + Drift
-      let px = bx + Math.sin(t) * 0.5;
-      let py = by + Math.cos(t * 0.8) * 0.5;
-      let pz = bz + Math.sin(t * 1.2) * 0.5;
-
-      // Apply Rhythm Expansion
-      px *= expansion;
-      py *= expansion;
-      pz *= expansion;
-
-      // Apply Intensity (shrink to center when paused)
-      px *= intensity;
-      py *= intensity;
-      pz *= intensity;
-
-      positions[ix] = px;
-      positions[ix + 1] = py;
-      positions[ix + 2] = pz;
-
-      // Alpha / Brightness
-      // Particles fade out when intensity drops
-      const baseAlpha = 0.3 + (euphoria * 0.5);
-      // Flash on kick
-      const beatFlash = kick * energy; 
-      
-      const alpha = (baseAlpha + beatFlash) * intensity;
-
-      colors[ix] = targetColor.r * alpha;
-      colors[ix + 1] = targetColor.g * alpha;
-      colors[ix + 2] = targetColor.b * alpha;
-    }
-
-    geom.attributes.position.needsUpdate = true;
-    geom.attributes.color.needsUpdate = true;
-    
-    // Rotate entire cloud slowly
-    meshRef.current.rotation.y = time * 0.05 * intensity;
-  });
-
-  return (
-    <points ref={meshRef}>
-      <bufferGeometry>
-        <bufferAttribute 
-          attach="attributes-position" 
-          count={maxCount} 
-          array={new Float32Array(maxCount * 3)} 
-          itemSize={3} 
-          usage={THREE.DynamicDrawUsage}
-        />
-        <bufferAttribute 
-          attach="attributes-color" 
-          count={maxCount} 
-          array={new Float32Array(maxCount * 3)} 
-          itemSize={3} 
-          usage={THREE.DynamicDrawUsage}
-        />
-      </bufferGeometry>
-      <pointsMaterial 
-        size={0.2}
-        vertexColors 
-        transparent 
-        opacity={1} 
-        blending={THREE.AdditiveBlending} 
-        depthWrite={false}
-        map={particleTexture || undefined}
-      />
-    </points>
-  );
-};
-
-// --- Main Visualizer Blob ---
-
-const AudioReactiveBlob = ({ smoothedValues }: { smoothedValues: React.MutableRefObject<any> }) => {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const noise3D = useMemo(() => createNoise3D(), []);
-  
-  // Determine material type based on dominant mood (calculated from props in parent, but simplified here)
-  // We'll just swap materials based on the smoothed values in the ref during render if needed, 
-  // but swapping materials in useFrame is expensive. 
-  // Better to stick to one versatile material or update properties.
-  // For this implementation, let's use a high-quality dynamic material that adapts.
-
-  const materialRef = useRef<any>(null);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    
-    const { energy, valence, euphoria, cognition, intensity, beatAccumulator } = smoothedValues.current;
-    const time = state.clock.getElapsedTime();
-
-    // --- BEAT SYNTHESIS ---
-    // Create a sharp impulse for the beat
-    const rawSine = Math.sin(beatAccumulator * Math.PI * 2);
-    // 'Kick' is positive only, sharp peak
-    const kick = Math.pow(Math.max(0, rawSine), 8); 
-    // 'Snare' or offbeat noise
-    const fastNoise = noise3D(time * 2, 0, 0);
-
-    // --- DISTORTION LOGIC ---
-    // If intensity is 0 (paused), distortion is 0 -> Perfect Sphere
-    const baseDistortion = intensity * (0.2 + (energy * 0.6)); 
-    const beatDistortion = intensity * (kick * 0.4 * energy); // Extra pop on beat
-
-    const geometry = meshRef.current.geometry;
-    const positionAttribute = geometry.getAttribute('position');
-    const vertex = new THREE.Vector3();
-    const originalPositions = (geometry.attributes.originalPosition as THREE.BufferAttribute)?.array || geometry.attributes.position.array;
-    
-    // Store original positions once to prevent sphere from degrading
-    if (!geometry.attributes.originalPosition) {
-      geometry.setAttribute('originalPosition', positionAttribute.clone());
-    }
-
-    // Noise parameters
-    // Higher cognition = more complex, high frequency noise (spiky)
-    // Higher valence = smoother, flowing noise
-    const noiseFreq = 1.0 + (cognition * 2.0);
-    const speed = time * (0.5 + (energy * 0.5));
-
-    for (let i = 0; i < positionAttribute.count; i++) {
-      // Read from ORIGINAL perfect sphere position
-      vertex.fromBufferAttribute(geometry.attributes.originalPosition as THREE.BufferAttribute, i);
-      
-      // Calculate Noise
-      const n = noise3D(
-        vertex.x * noiseFreq + speed,
-        vertex.y * noiseFreq + speed,
-        vertex.z * noiseFreq
-      );
-
-      // Apply Distortion
-      // Combine smooth flow + beat kick
-      const scalar = 1 + (n * baseDistortion) + (kick * n * 0.2);
-      
-      vertex.multiplyScalar(scalar);
-      positionAttribute.setXYZ(i, vertex.x, vertex.y, vertex.z);
-    }
-
-    positionAttribute.needsUpdate = true;
-    geometry.computeVertexNormals();
-
-    // --- COLOR & MATERIAL UPDATE ---
-    if (materialRef.current) {
-        const c1 = new THREE.Color("#2b2b2b"); // Dark base
-        const c2 = new THREE.Color("#ffb347"); // Energy
-        const c3 = new THREE.Color("#32c9ff"); // Valence
-        const c4 = new THREE.Color("#ff4081"); // Euphoria
-
-        const finalColor = c1.clone();
-        finalColor.lerp(c2, energy * intensity);
-        finalColor.lerp(c3, valence * intensity);
-        finalColor.lerp(c4, euphoria * intensity * kick); // Flash on beat
-
-        materialRef.current.color = finalColor;
-        materialRef.current.emissive = finalColor;
-        // Pulse emissive intensity with beat
-        materialRef.current.emissiveIntensity = (0.2 + (euphoria * 0.8) + (kick * 0.5)) * intensity;
+      p.setup = () => {
+        if (!containerRef.current) return;
+        const { clientWidth, clientHeight } = containerRef.current;
+        p.createCanvas(clientWidth, clientHeight);
+        p.frameRate(60);
         
-        // Modify roughness/metalness based on mood
-        materialRef.current.roughness = 0.5 - (cognition * 0.4); // Focus makes it sharper/shiny
-        materialRef.current.metalness = 0.3 + (energy * 0.5);
+        // Initialize particles
+        for(let i=0; i<numParticles; i++) {
+          particles.push({
+            x: p.random(p.width),
+            y: p.random(p.height),
+            speed: p.random(0.5, 2),
+            size: p.random(1, 3),
+            alpha: p.random(50, 150)
+          });
+        }
+      };
+
+      p.windowResized = () => {
+        if (containerRef.current) {
+            const { clientWidth, clientHeight } = containerRef.current;
+            p.resizeCanvas(clientWidth, clientHeight);
+        }
+      };
+
+      const getThemeColor = (energy: number, valence: number) => {
+        p.colorMode(p.HSL);
+        let c;
+        if (energy > 0.8 && valence < 0.4) c = p.color(0, 100, 50); // Red (Metal)
+        else if (valence > 0.7) c = p.color(300, 100, 60); // Pink/Magenta (Happy)
+        else if (energy < 0.4) c = p.color(180, 80, 50); // Cyan (Chill)
+        else if (energy > 0.8) c = p.color(45, 100, 50); // Gold (High Energy)
+        else c = p.color(200, 60, 60); // Blueish default
+        
+        p.colorMode(p.RGB); // Reset to RGB for other drawings
+        return c;
+      };
+
+      p.draw = () => {
+        const { mood, tempo, isPlaying, progressMs, durationMs, showProgressRing } = stateRef.current;
+        
+        // --- SMOOTH PROGRESS LOGIC ---
+        if (progressMs !== lastPropProgressMs) {
+           smoothProgressMs = progressMs;
+           lastPropProgressMs = progressMs;
+        } else if (isPlaying) {
+           smoothProgressMs += p.deltaTime;
+        }
+        if (smoothProgressMs > durationMs) smoothProgressMs = durationMs;
+
+        p.clear(); 
+        
+        // --- BEAT LOGIC ---
+        const secondsPerBeat = 60 / (tempo || 120);
+        const time = p.millis() / 1000;
+        
+        let kick = 0;
+        if (isPlaying) {
+            const totalBeats = (smoothProgressMs / 1000) / secondsPerBeat;
+            const currentBeatPhase = totalBeats % 1;
+            kick = Math.pow(Math.max(0, 1 - currentBeatPhase), 4); 
+        } else {
+            kick = Math.sin(time) * 0.2; 
+        }
+
+        const centerX = p.width / 2;
+        const centerY = p.height / 2;
+
+        // --- SCREEN SHAKE ---
+        p.push(); 
+        if (isPlaying && mood.energy > 0.8) {
+            const shakeAmt = kick * 5 * mood.energy;
+            p.translate(p.random(-shakeAmt, shakeAmt), p.random(-shakeAmt, shakeAmt));
+        }
+
+        // --- PARTICLES ---
+        p.noStroke();
+        particles.forEach(pt => {
+            const speedMult = isPlaying ? 1 + (mood.energy * 2) + kick : 0.2;
+            pt.y -= pt.speed * speedMult;
+            if (pt.y < 0) {
+                pt.y = p.height;
+                pt.x = p.random(p.width);
+            }
+            p.fill(255, pt.alpha);
+            p.circle(pt.x, pt.y, pt.size);
+        });
+
+        // --- VISUALIZER GEOMETRY CONFIG ---
+        const baseColor = getThemeColor(mood.energy, mood.valence);
+        
+        // @ts-ignore
+        const ctx = p.drawingContext;
+        ctx.shadowBlur = 20 + (kick * 30);
+        ctx.shadowColor = baseColor.toString();
+
+        const baseRadius = Math.min(p.width, p.height) * 0.25;
+        const expansion = kick * (50 * mood.energy);
+        
+        const isSpiky = mood.energy > 0.6 && mood.valence < 0.5;
+        const noiseMax = isSpiky ? 3.0 + (mood.energy * 2) : 1.0;
+        const noiseSpeed = time * (isPlaying ? (0.5 + mood.energy) : 0.2);
+
+        // Shared function to calculate radius at any angle
+        // This ensures the progress ring follows the EXACT same shape as the inner visualizer
+        const getRadius = (angle: number) => {
+            const xoff = p.map(Math.cos(angle), -1, 1, 0, noiseMax);
+            const yoff = p.map(Math.sin(angle), -1, 1, 0, noiseMax);
+            let n = p.noise(xoff, yoff, noiseSpeed);
+            
+            let r = baseRadius + expansion;
+            if (isSpiky) {
+                 r += p.map(n, 0, 1, -20, 80 * mood.energy);
+            } else {
+                 r += p.map(n, 0, 1, -30, 30);
+            }
+
+            if (mood.cognition > 0.7) {
+                // Use deterministic noise instead of random so outer ring matches inner ring
+                const jitter = p.map(p.noise(angle * 10, time * 15), 0, 1, -3, 3);
+                r += jitter;
+            }
+            return r;
+        };
+
+        // --- DRAW INNER SHAPE ---
+        p.noFill();
+        p.stroke(baseColor);
+        p.strokeWeight(3 + (kick * 2));
+
+        p.beginShape();
+        for (let a = 0; a <= p.TWO_PI; a += 0.05) {
+            const r = getRadius(a);
+            const x = centerX + r * Math.cos(a);
+            const y = centerY + r * Math.sin(a);
+            p.vertex(x, y);
+        }
+        p.endShape(p.CLOSE);
+
+        // --- DRAW PROGRESS RING ---
+        if (isPlaying && durationMs > 0 && showProgressRing) {
+            const progress = Math.min(1, smoothProgressMs / durationMs);
+            
+            if (progress > 0) {
+                ctx.shadowBlur = 10 + (kick * 10);
+                ctx.shadowColor = baseColor.toString();
+                
+                p.stroke(baseColor);
+                p.strokeWeight(4);
+                p.strokeCap(p.ROUND);
+                p.noFill();
+
+                const outerGap = 20 + (kick * 10); // Gap between visualizer and progress ring
+
+                p.beginShape();
+                const startAngle = -p.HALF_PI; // Start at top
+                const totalRotation = p.TWO_PI * progress;
+                const endAngle = startAngle + totalRotation;
+
+                // Draw segment matching noise shape
+                for (let a = startAngle; a <= endAngle; a += 0.05) {
+                    const r = getRadius(a) + outerGap;
+                    const x = centerX + r * Math.cos(a);
+                    const y = centerY + r * Math.sin(a);
+                    p.vertex(x, y);
+                }
+
+                // Ensure line ends exactly at progress point
+                const finalR = getRadius(endAngle) + outerGap;
+                const finalX = centerX + finalR * Math.cos(endAngle);
+                const finalY = centerY + finalR * Math.sin(endAngle);
+                p.vertex(finalX, finalY);
+                
+                p.endShape();
+
+                // Draw Head (Circle at tip)
+                p.noStroke();
+                p.fill(255);
+                p.circle(finalX, finalY, 6 + (kick * 2));
+            }
+        }
+
+        // --- HUD ELEMENTS (Only visible when ring is showing) ---
+        if (showProgressRing) {
+            p.fill(255);
+            p.noStroke();
+            p.textAlign(p.LEFT, p.TOP);
+            p.textSize(12);
+            p.textFont('monospace');
+            
+            const leftX = 40;
+            const topY = p.height - 150;
+            
+            if (isPlaying) {
+                p.text(`BPM: ${Math.round(tempo)}`, leftX, topY);
+                p.text(`NRG: ${(mood.energy * 100).toFixed(0)}%`, leftX, topY + 20);
+                p.text(`TONE: ${(mood.valence * 100).toFixed(0)}%`, leftX, topY + 40);
+                
+                const barW = 100;
+                p.noFill();
+                p.stroke(255, 50);
+                p.rect(leftX, topY + 60, barW, 5);
+                p.noStroke();
+                p.fill(baseColor);
+                p.rect(leftX, topY + 60, barW * kick, 5);
+            }
+        }
+        
+        p.pop(); 
+      };
+    };
+
+    try {
+        // @ts-ignore
+        const P5Constructor = p5.default || p5;
+        p5InstanceRef.current = new P5Constructor(sketch, containerRef.current);
+    } catch (e) {
+        console.error("Failed to initialize p5:", e);
     }
-    
-    // Rotation
-    meshRef.current.rotation.y += 0.002 + (energy * 0.01 * intensity);
-    meshRef.current.rotation.z = Math.sin(time * 0.2) * 0.1 * intensity;
-  });
 
-  return (
-    <mesh ref={meshRef}>
-      <sphereGeometry args={[1.2, 128, 128]} />
-      <meshStandardMaterial 
-        ref={materialRef}
-        color="#ffffff"
-        roughness={0.4}
-        metalness={0.5}
-      />
-    </mesh>
-  );
-};
+    return () => {
+      if (p5InstanceRef.current) {
+        p5InstanceRef.current.remove();
+      }
+    };
+  }, []); 
 
-// --- Scene Content Wrapper ---
-const SceneContent: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
-  const { width } = useThree((state) => state.viewport);
-  const isMobile = width < 7; 
-  
-  // Use the smoothing hook
-  const smoothedValues = useSmoothedState(mood, isPlaying, tempo);
-
-  // Responsive positioning
-  let groupScale = 1.0;
-  let groupPos: [number, number, number] = [0, 0, 0];
-
-  if (isMobile) {
-    groupScale = 0.6; 
-    groupPos = [0, 0.5, 0]; 
-  } else {
-    groupPos = [0, 0, 0];
-    groupScale = 0.9;
-  }
-
-  return (
-    <group scale={groupScale} position={groupPos}>
-        <AudioReactiveBlob smoothedValues={smoothedValues} />
-        <ParticleSystem smoothedValues={smoothedValues} />
-    </group>
-  );
-};
-
-const Scene: React.FC<SceneProps> = ({ mood, tempo, isPlaying }) => {
-  return (
-    <Canvas dpr={[1, 2]} camera={{ position: [0, 0, 8], fov: 35 }} gl={{ alpha: true, antialias: true }}>
-      <ambientLight intensity={0.2} />
-      <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} />
-      <pointLight position={[-10, -10, -10]} intensity={0.5} color="#32c9ff" />
-      <pointLight position={[0, 5, 5]} intensity={0.8} />
-      
-      <Environment preset="night" />
-      
-      <SceneContent mood={mood} tempo={tempo} isPlaying={isPlaying} />
-      
-      <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.5} />
-    </Canvas>
-  );
+  return <div ref={containerRef} className="w-full h-full overflow-hidden" />;
 };
 
 export default Scene;

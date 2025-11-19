@@ -18,17 +18,29 @@ type PresetMood = {
 };
 
 const MOOD_PRESETS: PresetMood[] = [
-  { name: 'Happy', values: { energy: 0.8, valence: 0.9, euphoria: 0.7, cognition: 0.3 } },
-  { name: 'Melancholy', values: { energy: 0.2, valence: 0.2, euphoria: 0.1, cognition: 0.6 } },
-  { name: 'Focus', values: { energy: 0.4, valence: 0.5, euphoria: 0.2, cognition: 0.9 } },
-  { name: 'Hyper', values: { energy: 0.95, valence: 0.7, euphoria: 0.9, cognition: 0.1 } },
+  { name: 'HAPPY', values: { energy: 0.8, valence: 0.9, euphoria: 0.7, cognition: 0.3 } },
+  { name: 'MELANCHOLIC', values: { energy: 0.2, valence: 0.2, euphoria: 0.1, cognition: 0.6 } },
+  { name: 'CALM', values: { energy: 0.3, valence: 0.8, euphoria: 0.2, cognition: 0.5 } },
+  { name: 'ANXIOUS', values: { energy: 0.8, valence: 0.2, euphoria: 0.3, cognition: 0.8 } },
+  { name: 'BITTERSWEET', values: { energy: 0.5, valence: 0.5, euphoria: 0.4, cognition: 0.6 } },
+  { name: 'DREAMY', values: { energy: 0.3, valence: 0.6, euphoria: 0.6, cognition: 0.4 } },
+  { name: 'NOSTALGIC', values: { energy: 0.4, valence: 0.4, euphoria: 0.3, cognition: 0.7 } },
+  { name: 'TENDER', values: { energy: 0.2, valence: 0.7, euphoria: 0.2, cognition: 0.5 } },
+  { name: 'SLEEPY', values: { energy: 0.1, valence: 0.5, euphoria: 0.1, cognition: 0.2 } },
+  { name: 'LAID-BACK', values: { energy: 0.4, valence: 0.8, euphoria: 0.3, cognition: 0.3 } },
+  { name: 'PUMPED', values: { energy: 0.9, valence: 0.7, euphoria: 0.9, cognition: 0.4 } },
+  { name: 'HYPER', values: { energy: 1.0, valence: 0.6, euphoria: 1.0, cognition: 0.1 } },
+  { name: 'FOCUS', values: { energy: 0.3, valence: 0.5, euphoria: 0.1, cognition: 0.95 } },
+  { name: 'BACKGROUND', values: { energy: 0.3, valence: 0.5, euphoria: 0.1, cognition: 0.7 } },
+  { name: 'PARTY', values: { energy: 0.9, valence: 0.9, euphoria: 0.9, cognition: 0.2 } },
+  { name: 'NIGHT DRIVE', values: { energy: 0.7, valence: 0.3, euphoria: 0.6, cognition: 0.7 } },
 ];
 
 const PARAM_CONFIG = [
   { label: 'Energy', key: 'energy', color: 'text-orange-400', bg: 'bg-orange-400' },
-  { label: 'Euphoria', key: 'euphoria', color: 'text-pink-400', bg: 'bg-pink-400' },
-  { label: 'Valence', key: 'valence', color: 'text-cyan-400', bg: 'bg-cyan-400' },
-  { label: 'Cognition', key: 'cognition', color: 'text-white', bg: 'bg-white' },
+  { label: 'Lift', key: 'euphoria', color: 'text-pink-400', bg: 'bg-pink-400' },
+  { label: 'Mood Tone', key: 'valence', color: 'text-cyan-400', bg: 'bg-cyan-400' },
+  { label: 'Focus Level', key: 'cognition', color: 'text-white', bg: 'bg-white' },
 ] as const;
 
 const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectSpotify, onToggleDemo, isDemoMode, token }) => {
@@ -44,7 +56,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
   const [loading, setLoading] = useState(false);
   const [userContext, setUserContext] = useState("");
   
-  // Export state
+  // Selection & Export State
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [exporting, setExporting] = useState(false);
   const [exportUrl, setExportUrl] = useState<string | null>(null);
 
@@ -62,11 +75,41 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
     // Use customMood for generation, not the visualizer mood
     const result = await generatePlaylist(customMood, userContext);
     setPlaylist(result);
+    // Select all songs by default
+    setSelectedIndices(new Set(result.songs.map((_, i) => i)));
     setLoading(false);
+  };
+
+  const toggleSelection = (index: number) => {
+    const newSet = new Set(selectedIndices);
+    if (newSet.has(index)) {
+      newSet.delete(index);
+    } else {
+      newSet.add(index);
+    }
+    setSelectedIndices(newSet);
+  };
+
+  const toggleSelectAll = () => {
+    if (!playlist) return;
+    if (selectedIndices.size === playlist.songs.length) {
+      setSelectedIndices(new Set());
+    } else {
+      setSelectedIndices(new Set(playlist.songs.map((_, i) => i)));
+    }
   };
 
   const handleExportToSpotify = async () => {
     if (!token || !playlist) return;
+    
+    // Filter songs based on selection
+    const selectedSongs = playlist.songs.filter((_, index) => selectedIndices.has(index));
+    
+    if (selectedSongs.length === 0) {
+      alert("Please select at least one song to export.");
+      return;
+    }
+
     setExporting(true);
 
     try {
@@ -81,7 +124,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
       
       // 3. Find Tracks
       const trackUris: string[] = [];
-      for (const song of playlist.songs) {
+      for (const song of selectedSongs) {
         const uri = await searchTrack(token, `${song.title} ${song.artist}`);
         if (uri) {
           trackUris.push(uri);
@@ -113,7 +156,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
   };
 
   const getVisualizerTitle = () => {
-    if (currentMood.euphoria > 0.8) return "STATE: EUPHORIC";
+    if (currentMood.euphoria > 0.8) return "STATE: LIFTED";
     if (currentMood.valence < 0.3 && currentMood.energy < 0.3) return "STATE: MELANCHOLIC";
     if (currentMood.energy > 0.8) return "STATE: HIGH_ENERGY";
     if (currentMood.cognition > 0.8) return "STATE: DEEP_FOCUS";
@@ -289,6 +332,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
         <div ref={outputRef} className="space-y-4 pt-4 border-t border-white/20">
            <div className="flex justify-between items-center mb-2">
             <span className="text-sm font-bold text-white uppercase">/// Output_Log</span>
+            {playlist && (
+              <button 
+                onClick={toggleSelectAll}
+                className="text-[9px] uppercase text-white/50 hover:text-white hover:underline font-mono"
+              >
+                {selectedIndices.size === playlist.songs.length ? "[ Unselect All ]" : "[ Select All ]"}
+              </button>
+            )}
           </div>
 
           {playlist ? (
@@ -300,34 +351,62 @@ const Sidebar: React.FC<SidebarProps> = ({ currentMood, spotifyState, onConnectS
               </div>
               
               <div className="space-y-3">
-                {playlist.songs.map((song, idx) => (
-                  <div key={idx} className="group p-3 border border-white/10 bg-white/5 hover:border-white/50 transition-colors relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="w-2 h-2 bg-white"></div>
+                {playlist.songs.map((song, idx) => {
+                  const isSelected = selectedIndices.has(idx);
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => toggleSelection(idx)}
+                      className={`group p-3 border cursor-pointer transition-all relative overflow-hidden
+                        ${isSelected 
+                          ? 'border-white/30 bg-white/10 opacity-100' 
+                          : 'border-white/5 bg-black opacity-50 hover:opacity-80 hover:border-white/20'
+                        }`}
+                    >
+                      {/* Checkbox Aesthetic */}
+                      <div className="flex items-start gap-3">
+                        <div className={`w-4 h-4 border border-white/40 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5 ${isSelected ? 'bg-white text-black font-bold' : 'bg-transparent text-transparent'}`}>
+                          X
+                        </div>
+                        <div className="flex-1 min-w-0">
+                           <div className="flex items-center justify-between mb-1">
+                            <span className={`font-bold text-sm uppercase tracking-tight truncate ${isSelected ? 'text-white' : 'text-white/70'}`}>{song.title}</span>
+                          </div>
+                          <div className="text-xs text-gray-400 mb-2 uppercase border-b border-white/5 pb-1 inline-block">{song.artist}</div>
+                          <div className="text-[10px] text-white/50 leading-relaxed font-mono">&gt;&gt; {song.reason}</div>
+                        </div>
+                      </div>
+                      
+                      {isSelected && (
+                        <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="w-2 h-2 bg-white"></div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-white text-sm uppercase tracking-tight">{song.title}</span>
-                    </div>
-                    <div className="text-xs text-gray-400 mb-2 uppercase border-b border-white/5 pb-1 inline-block">{song.artist}</div>
-                    <div className="text-[10px] text-white/50 leading-relaxed font-mono">&gt;&gt; {song.reason}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Export to Spotify Button */}
               {!exportUrl ? (
                 <button
                   onClick={handleExportToSpotify}
-                  disabled={exporting || !token}
+                  disabled={exporting || !token || selectedIndices.size === 0}
                   className={`w-full py-2 font-bold text-xs uppercase tracking-wider border transition-all
-                    ${!token 
+                    ${!token || selectedIndices.size === 0
                       ? 'opacity-50 border-white/10 text-white/30 cursor-not-allowed'
                       : exporting 
                         ? 'bg-green-500/20 border-green-500/50 text-green-400'
                         : 'bg-green-600 hover:bg-green-500 border-transparent text-white hover:shadow-[0px_0px_15px_rgba(34,197,94,0.4)]'
                     }`}
                 >
-                   {!token ? "[ CONNECT_SPOTIFY_FIRST ]" : exporting ? ">> SYNCHRONIZING..." : "[ EXPORT_TO_SPOTIFY ]"}
+                   {!token 
+                    ? "[ CONNECT_SPOTIFY_FIRST ]" 
+                    : selectedIndices.size === 0 
+                      ? "[ SELECT_TRACKS ]"
+                      : exporting 
+                        ? ">> SYNCHRONIZING..." 
+                        : `[ EXPORT_TO_SPOTIFY (${selectedIndices.size}) ]`}
                 </button>
               ) : (
                  <a 

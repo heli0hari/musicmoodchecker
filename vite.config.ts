@@ -7,6 +7,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, (process as any).cwd(), '');
   return {
     plugins: [react()],
+    server: {
+      host: '127.0.0.1', // Force IPv4 loopback
+      port: 5173,
+    },
     define: {
       // This maps your .env VITE_API_KEY to process.env.API_KEY in the browser code
       'process.env.API_KEY': JSON.stringify(env.VITE_API_KEY),

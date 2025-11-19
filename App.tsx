@@ -12,7 +12,22 @@ const INITIAL_MOOD: MoodState = {
   cognition: 0.6
 };
 
+// Helper to ensure we use 127.0.0.1 instead of localhost for Spotify
+// Spotify DOES NOT allow 'localhost' as a redirect URI.
+const getRedirectUri = () => {
+  const origin = window.location.origin;
+  const safeOrigin = origin.replace('localhost', '127.0.0.1');
+  return safeOrigin.endsWith('/') ? safeOrigin : `${safeOrigin}/`;
+};
+
 const App: React.FC = () => {
+  // Force redirect to 127.0.0.1 if on localhost to match Spotify Redirect URI rules
+  useEffect(() => {
+    if (window.location.hostname === 'localhost') {
+      window.location.hostname = '127.0.0.1';
+    }
+  }, []);
+
   const [clientId, setClientId] = useState<string>(() => {
     const saved = localStorage.getItem('spotify_client_id');
     if (saved) return saved;
@@ -30,6 +45,9 @@ const App: React.FC = () => {
   const [mood, setMood] = useState<MoodState>(INITIAL_MOOD);
   const [showClientId, setShowClientId] = useState(false); // Toggle ID visibility
   
+  // Responsive State
+  const [isDesktop, setIsDesktop] = useState(window.matchMedia("(min-width: 768px)").matches);
+  
   // Mobile Menu State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(true);
   const touchStartY = useRef(0);
@@ -44,6 +62,13 @@ const App: React.FC = () => {
   });
 
   const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 768px)");
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
   // Handle Spotify Auth Callback (PKCE Flow)
   useEffect(() => {
@@ -60,7 +85,7 @@ const App: React.FC = () => {
     } else if (code) {
       // Exchange code for token
       const storedClientId = localStorage.getItem('spotify_client_id') || clientId;
-      const redirectUri = `${window.location.origin}/`; 
+      const redirectUri = getRedirectUri(); 
 
       if (storedClientId) {
         getAccessToken(storedClientId, code, redirectUri).then(accessToken => {
@@ -99,7 +124,7 @@ const App: React.FC = () => {
     localStorage.setItem('spotify_client_id', cleanClientId);
     
     // PKCE Flow
-    const redirectUri = `${window.location.origin}/`; 
+    const redirectUri = getRedirectUri(); 
     await redirectToSpotifyAuth(cleanClientId, redirectUri);
   };
 
@@ -166,7 +191,7 @@ const App: React.FC = () => {
              danceability: newEuphoria,
              acousticness: newCognition,
              instrumentalness: newCognition,
-             tempo: 100 + Math.random() * 40,
+             tempo: 120, // Standard tempo for demo
              loudness: -5
           },
           progress_ms: Math.random() * 240000,
@@ -174,7 +199,7 @@ const App: React.FC = () => {
        });
     };
     updateDemo();
-    const interval = setInterval(updateDemo, 4000);
+    const interval = setInterval(updateDemo, 5000); // Change mood every 5s
     return () => clearInterval(interval);
   }, [isDemoMode]);
 
@@ -199,16 +224,21 @@ const App: React.FC = () => {
           setSpotifyState(prev => ({ ...prev, progress_ms, isPlaying: is_playing }));
         }
       } else {
-         // If no track is playing, we might want to clear state or just set isPlaying false
          setSpotifyState(prev => ({ ...prev, isPlaying: false }));
       }
     };
     
     fetchData();
-    // Poll faster (every 1s) to make visualizer and controls feel more responsive
+    // Poll faster (every 1s) to keep the visualizer synced
     const interval = setInterval(fetchData, 1000); 
     return () => clearInterval(interval);
   }, [token, spotifyState.currentTrack?.id, isDemoMode]);
+
+  // Determine visual states
+  // Show Ring: Always on Desktop, OR on Mobile when menu is CLOSED
+  const showProgressRing = isDesktop || !isMobileMenuOpen;
+  // Show Bar: Only on Mobile AND when menu is OPEN
+  const showProgressBar = !isDesktop && isMobileMenuOpen;
 
   return (
     <div className="w-full h-[100dvh] flex flex-col md:flex-row bg-[#050505] text-[#e0e0e0] overflow-hidden relative font-pixel">
@@ -237,13 +267,13 @@ const App: React.FC = () => {
                 <ul className="list-disc pl-4 space-y-1">
                   <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank" className="text-blue-400 underline">Spotify Developer Dashboard</a></li>
                   <li>Add your email to <strong>Users and Access</strong> (Required for Development Mode)</li>
-                  <li>Add this exact URL to <strong>Redirect URIs</strong>:</li>
+                  <li>Add this exact URL to <strong>Redirect URIs</strong> (Spotify does not allow 'localhost'):</li>
                 </ul>
               </div>
               
               <div className="p-2 bg-white/5 border border-white/10 text-center">
                 <code className="text-green-400 select-all text-xs block">
-                  {`${window.location.origin}/`}
+                  {getRedirectUri()}
                 </code>
               </div>
             </div>
@@ -285,12 +315,15 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* 3D Scene */}
+      {/* 2D Scene (p5.js) - Explicitly Background */}
       <div className="absolute inset-0 md:relative md:flex-1 z-0">
         <Scene 
           mood={mood} 
-          tempo={spotifyState.features?.tempo || 0} 
+          tempo={spotifyState.features?.tempo || 120} 
           isPlaying={spotifyState.isPlaying}
+          progressMs={spotifyState.progress_ms}
+          durationMs={spotifyState.currentTrack?.duration_ms || 1}
+          showProgressRing={showProgressRing}
         />
       </div>
 
@@ -299,10 +332,11 @@ const App: React.FC = () => {
         spotifyState={spotifyState} 
         token={token} 
         isDemoMode={isDemoMode} 
+        showProgressBar={showProgressBar}
       />
 
       {/* Sidebar (Desktop) */}
-      <div className="hidden md:block md:h-full md:w-auto md:flex-none z-10 relative">
+      <div className="hidden md:block md:h-full md:w-auto md:flex-none z-10 relative bg-black/80 backdrop-blur-md border-l border-white/20">
         <Sidebar 
           currentMood={mood} 
           spotifyState={spotifyState}
@@ -323,7 +357,7 @@ const App: React.FC = () => {
 
        {/* Sidebar (Mobile) - Collapsible */}
        <div 
-         className={`absolute bottom-0 w-full md:hidden z-50 transition-all duration-300 ease-out border-t border-white/20 bg-black/90 backdrop-blur-md flex flex-col shadow-[0px_-10px_40px_rgba(0,0,0,0.8)] ${isMobileMenuOpen ? 'h-[65vh]' : 'h-28'}`}
+         className={`absolute bottom-0 w-full md:hidden z-50 transition-all duration-300 ease-out border-t border-white/20 bg-black/95 backdrop-blur-xl flex flex-col shadow-[0px_-10px_40px_rgba(0,0,0,0.8)] ${isMobileMenuOpen ? 'h-[65vh]' : 'h-28'}`}
        >
           {/* Touch Handle / Toggle */}
           <div 
